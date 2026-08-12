@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.1.0
-// @description  Adds Radarr or Sonarr controls beside IMDb title links using loader-provided endpoints.
+// @version      5.2.0
+// @description  Adds Radarr or Sonarr controls beside IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
@@ -60,7 +60,14 @@
     const pageHostname = normalizeHostname(location.hostname);
     if (config.excludedDomains.some(domain => isDomainOrSubdomain(pageHostname, domain))) return;
 
-    const LINK_SELECTOR = 'a[href*="imdb.com/title/"]';
+    const LINK_SELECTOR = [
+        'a[href*="imdb.com/title/"]',
+        'a[href*="themoviedb.org/"]',
+        'a[href^="/movie/"]',
+        'a[href^="/tv/"]',
+        'a[href*="thetvdb.com/"]',
+        'a[href^="/series/"]'
+    ].join(', ');
     const ADDED_ATTRIBUTE = 'data-mdblist-added';
     const TV_PATTERNS = [
         /\btv\s+(?:mini[- ]?series|series|show)\b/i,
@@ -126,11 +133,58 @@
         (document.head || document.documentElement).appendChild(style);
     }
 
-    function extractIMDbID(link) {
+    function titleFromTVDBLink(link, url) {
+        const linkText = String(link.textContent || '').trim();
+        if (linkText && !/^https?:\/\//i.test(linkText)) return linkText;
+
+        const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?series\/([^/?#]+)/i)?.[1] || '';
+        return decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+    }
+
+    function extractMediaReference(link, container = null) {
         try {
             const url = new URL(link.href, location.href);
-            if (!/(^|\.)imdb\.com$/i.test(url.hostname)) return null;
-            return url.pathname.match(/^\/title\/(tt\d+)/i)?.[1] || null;
+            const hostname = url.hostname.toLowerCase();
+
+            if (/(^|\.)imdb\.com$/i.test(hostname)) {
+                const id = url.pathname.match(/^\/title\/(tt\d+)/i)?.[1];
+                return id ? { source: 'imdb', id, type: null, term: `imdb:${id}` } : null;
+            }
+
+            if (/(^|\.)themoviedb\.org$/i.test(hostname)) {
+                const match = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(movie|tv)\/(\d+)/i);
+                if (!match) return null;
+                const type = match[1].toLowerCase() === 'tv' ? 'tv' : 'movie';
+                return { source: 'tmdb', id: match[2], type, term: `tmdb:${match[2]}` };
+            }
+
+            if (/(^|\.)thetvdb\.com$/i.test(hostname)) {
+                const seriesPath = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?series\/([^/?#]+)/i);
+                if (!seriesPath) return null;
+
+                const visibleContext = [
+                    link.textContent,
+                    link.title,
+                    link.getAttribute('aria-label'),
+                    container?.innerText,
+                    container?.textContent
+                ].filter(Boolean).join(' ');
+                const id = [
+                    url.searchParams.get('id'),
+                    url.searchParams.get('seriesid'),
+                    link.dataset.tvdbId,
+                    link.dataset.seriesId,
+                    /^\d+$/.test(seriesPath[1]) ? seriesPath[1] : '',
+                    visibleContext.match(/(?:the\s*)?tvdb(?:\.com)?\s*(?:series\s*)?id\s*[:#]?\s*(\d+)/i)?.[1]
+                ].find(value => /^\d+$/.test(String(value || '')));
+
+                if (id) return { source: 'tvdb', id: String(id), type: 'tv', term: `tvdb:${id}` };
+
+                const title = titleFromTVDBLink(link, url);
+                return title ? { source: 'tvdb', id: seriesPath[1], type: 'tv', term: title } : null;
+            }
+
+            return null;
         } catch {
             return null;
         }
@@ -178,9 +232,17 @@
         return score;
     }
 
-    function preferredLinkForTitle(link, container, imdbID) {
+    function referenceKey(reference) {
+        return `${reference.source}:${reference.id}:${reference.type || 'unknown'}`;
+    }
+
+    function preferredLinkForTitle(link, container, reference) {
+        const key = referenceKey(reference);
         const candidates = Array.from(container.querySelectorAll(LINK_SELECTOR))
-            .filter(candidate => extractIMDbID(candidate) === imdbID);
+            .filter(candidate => {
+                const candidateReference = extractMediaReference(candidate, container);
+                return candidateReference && referenceKey(candidateReference) === key;
+            });
         if (!candidates.length) return link;
         return candidates.reduce((best, candidate) =>
             linkPlacementScore(candidate) > linkPlacementScore(best) ? candidate : best
@@ -194,10 +256,10 @@
         return link;
     }
 
-    function createMDBListButton(imdbID, type, link, container) {
+    function createMDBListButton(reference, type, link, container) {
         const wrapper = document.createElement('span');
         wrapper.className = 'mdblist-link-wrap';
-        wrapper.dataset.imdbId = imdbID;
+        wrapper.dataset.mediaKey = referenceKey(reference);
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'mdblist-btn';
@@ -209,7 +271,7 @@
         button.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
-            const term = encodeURIComponent(`imdb:${imdbID}`);
+            const term = encodeURIComponent(reference.term);
             window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
         });
         wrapper.appendChild(button);
@@ -225,17 +287,18 @@
     function processLink(link) {
         if (!(link instanceof HTMLAnchorElement)) return;
         if (link.getAttribute(ADDED_ATTRIBUTE) === 'true') return;
-        const imdbID = extractIMDbID(link);
-        if (!imdbID) return;
         const container = findResultContainer(link);
         if (!container) return;
-        if (preferredLinkForTitle(link, container, imdbID) !== link) return;
+        const reference = extractMediaReference(link, container);
+        if (!reference) return;
+        if (preferredLinkForTitle(link, container, reference) !== link) return;
 
+        const mediaKey = referenceKey(reference);
         const duplicate = Array.from(container.querySelectorAll('.mdblist-link-wrap'))
-            .some(element => element.dataset.imdbId === imdbID);
+            .some(element => element.dataset.mediaKey === mediaKey);
         link.setAttribute(ADDED_ATTRIBUTE, 'true');
         if (duplicate) return;
-        createMDBListButton(imdbID, guessType(link, container), link, container);
+        createMDBListButton(reference, reference.type || guessType(link, container), link, container);
     }
 
     function processLinks(context = document) {

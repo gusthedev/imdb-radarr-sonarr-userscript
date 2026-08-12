@@ -1,6 +1,6 @@
 # IMDb to Radarr/Sonarr Userscript
 
-This repository contains the shared, endpoint-free core for a Tampermonkey userscript that adds Radarr and Sonarr buttons beside IMDb title links.
+This repository contains the shared, endpoint-free core for a Tampermonkey userscript that adds Radarr and Sonarr buttons beside IMDb, TMDB, and TVDB title links.
 
 ## Privacy model
 
@@ -22,3 +22,10 @@ The loader retrieves the current core from this repository whenever it runs. Thi
 - `excludedDomains`: optional domains and subdomains on which the core should immediately stop.
 
 No API keys are needed. The script opens the normal Radarr or Sonarr add screen for manual review.
+
+## Supported links
+
+- IMDb title links use `imdb:<id>` and retain the script's surrounding-text movie/TV detection.
+- TMDB `/movie/<id>` links open Radarr using `tmdb:<id>`.
+- TMDB `/tv/<id>` links open Sonarr using `tmdb:<id>`.
+- TVDB series links open Sonarr. A numeric TVDB ID is used when the URL or nearby link metadata exposes one; modern slug-only TVDB links fall back to a normal title search.
