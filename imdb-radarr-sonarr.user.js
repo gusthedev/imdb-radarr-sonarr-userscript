@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.2.0
+// @version      5.2.1
 // @description  Adds Radarr or Sonarr controls beside IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -133,9 +133,20 @@
         (document.head || document.documentElement).appendChild(style);
     }
 
-    function titleFromTVDBLink(link, url) {
-        const linkText = String(link.textContent || '').trim();
-        if (linkText && !/^https?:\/\//i.test(linkText)) return linkText;
+    function titleFromTVDBLink(link, url, container = null) {
+        const heading = link.querySelector?.('h1, h2, h3, h4, [role="heading"]')
+            || container?.querySelector?.('h3');
+        const headingText = String(heading?.textContent || '').trim();
+        if (headingText) return headingText;
+
+        const visibleLines = String(link.innerText || link.textContent || '')
+            .split(/\n+/)
+            .map(line => line.trim())
+            .filter(Boolean);
+        const firstLine = visibleLines[0] || '';
+        if (firstLine && !/^https?:\/\//i.test(firstLine) && !/^thetvdb\.com$/i.test(firstLine)) {
+            return firstLine;
+        }
 
         const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?series\/([^/?#]+)/i)?.[1] || '';
         return decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
@@ -180,7 +191,7 @@
 
                 if (id) return { source: 'tvdb', id: String(id), type: 'tv', term: `tvdb:${id}` };
 
-                const title = titleFromTVDBLink(link, url);
+                const title = titleFromTVDBLink(link, url, container);
                 return title ? { source: 'tvdb', id: seriesPath[1], type: 'tv', term: title } : null;
             }
 
