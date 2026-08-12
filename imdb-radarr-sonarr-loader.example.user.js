@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.0.0
-// @description  Loads the shared IMDb-to-Radarr/Sonarr script with private local configuration.
+// @version      1.1.0
+// @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
