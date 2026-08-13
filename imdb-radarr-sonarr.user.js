@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.2.1
-// @description  Adds Radarr or Sonarr controls beside IMDb, TMDB, and TVDB title links using loader-provided endpoints.
+// @version      5.3.0
+// @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
@@ -60,15 +60,23 @@
     const pageHostname = normalizeHostname(location.hostname);
     if (config.excludedDomains.some(domain => isDomainOrSubdomain(pageHostname, domain))) return;
 
-    const LINK_SELECTOR = [
-        'a[href*="imdb.com/title/"]',
-        'a[href*="themoviedb.org/"]',
-        'a[href^="/movie/"]',
-        'a[href^="/tv/"]',
-        'a[href*="thetvdb.com/"]',
-        'a[href^="/series/"]'
-    ].join(', ');
-    const ADDED_ATTRIBUTE = 'data-mdblist-added';
+    function buildLinkSelector(hostname) {
+        const selectors = [
+            'a[href*="imdb.com/title/"]',
+            'a[href*="themoviedb.org/"]',
+            'a[href*="thetvdb.com/"]'
+        ];
+        if (isDomainOrSubdomain(hostname, 'themoviedb.org')) {
+            selectors.push('a[href*="/movie/"]', 'a[href*="/tv/"]');
+        }
+        if (isDomainOrSubdomain(hostname, 'thetvdb.com')) {
+            selectors.push('a[href*="/series/"]', 'a[href*="tab=series"]');
+        }
+        return [...new Set(selectors)].join(', ');
+    }
+
+    const LINK_SELECTOR = buildLinkSelector(pageHostname);
+    const CONTROL_SELECTOR = '.mdblist-link-wrap[data-imdb-rs-control="true"]';
     const TV_PATTERNS = [
         /\btv\s+(?:mini[- ]?series|series|show)\b/i,
         /\bmini[- ]?series\b/i,
@@ -88,6 +96,7 @@
                 display: inline-flex !important;
                 position: relative !important;
                 align-items: center !important;
+                gap: 3px !important;
                 margin-inline-start: 5px !important;
                 vertical-align: middle !important;
                 direction: ltr !important;
@@ -133,13 +142,23 @@
         (document.head || document.documentElement).appendChild(style);
     }
 
+    function textWithoutControls(element) {
+        if (!element) return '';
+        const clone = element.cloneNode?.(true);
+        if (clone) {
+            clone.querySelectorAll?.(CONTROL_SELECTOR).forEach(control => control.remove());
+            return String(clone.innerText || clone.textContent || '').trim();
+        }
+        return String(element.innerText || element.textContent || '').trim();
+    }
+
     function titleFromTVDBLink(link, url, container = null) {
         const heading = link.querySelector?.('h1, h2, h3, h4, [role="heading"]')
             || container?.querySelector?.('h3');
-        const headingText = String(heading?.textContent || '').trim();
+        const headingText = textWithoutControls(heading);
         if (headingText) return headingText;
 
-        const visibleLines = String(link.innerText || link.textContent || '')
+        const visibleLines = textWithoutControls(link)
             .split(/\n+/)
             .map(line => line.trim())
             .filter(Boolean);
@@ -148,8 +167,26 @@
             return firstLine;
         }
 
-        const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?series\/([^/?#]+)/i)?.[1] || '';
+        const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?series\/([^/?#]+)\/?$/i)?.[1] || '';
         return decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+    }
+
+    function searchParamCaseInsensitive(url, name) {
+        const expectedName = String(name).toLowerCase();
+        for (const [key, value] of url.searchParams) {
+            if (key.toLowerCase() === expectedName) return value;
+        }
+        return '';
+    }
+
+    function numericTVDBId(url, link, slug = '') {
+        return [
+            searchParamCaseInsensitive(url, 'id'),
+            searchParamCaseInsensitive(url, 'seriesid'),
+            link?.dataset?.tvdbId,
+            link?.dataset?.seriesId,
+            /^\d+$/.test(slug) ? slug : ''
+        ].find(value => /^\d+$/.test(String(value || ''))) || '';
     }
 
     function extractMediaReference(link, container = null) {
@@ -158,41 +195,30 @@
             const hostname = url.hostname.toLowerCase();
 
             if (/(^|\.)imdb\.com$/i.test(hostname)) {
-                const id = url.pathname.match(/^\/title\/(tt\d+)/i)?.[1];
+                const id = url.pathname.match(/^\/title\/(tt\d+)\/?$/i)?.[1];
                 return id ? { source: 'imdb', id, type: null, term: `imdb:${id}` } : null;
             }
 
             if (/(^|\.)themoviedb\.org$/i.test(hostname)) {
-                const match = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?(movie|tv)\/(\d+)/i);
+                const match = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(movie|tv)\/(\d+)(?:-[^/]+)?\/?$/i);
                 if (!match) return null;
                 const type = match[1].toLowerCase() === 'tv' ? 'tv' : 'movie';
                 return { source: 'tmdb', id: match[2], type, term: `tmdb:${match[2]}` };
             }
 
             if (/(^|\.)thetvdb\.com$/i.test(hostname)) {
-                const seriesPath = url.pathname.match(/^\/(?:[a-z]{2}(?:-[A-Z]{2})?\/)?series\/([^/?#]+)/i);
-                if (!seriesPath) return null;
+                const seriesPath = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?series\/([^/?#]+)\/?$/i);
+                const legacyPath = /^(?:\/|\/index\.php)$/i.test(url.pathname)
+                    && searchParamCaseInsensitive(url, 'tab').toLowerCase() === 'series';
+                if (!seriesPath && !legacyPath) return null;
 
-                const visibleContext = [
-                    link.textContent,
-                    link.title,
-                    link.getAttribute('aria-label'),
-                    container?.innerText,
-                    container?.textContent
-                ].filter(Boolean).join(' ');
-                const id = [
-                    url.searchParams.get('id'),
-                    url.searchParams.get('seriesid'),
-                    link.dataset.tvdbId,
-                    link.dataset.seriesId,
-                    /^\d+$/.test(seriesPath[1]) ? seriesPath[1] : '',
-                    visibleContext.match(/(?:the\s*)?tvdb(?:\.com)?\s*(?:series\s*)?id\s*[:#]?\s*(\d+)/i)?.[1]
-                ].find(value => /^\d+$/.test(String(value || '')));
-
+                const slug = seriesPath?.[1] || '';
+                const id = numericTVDBId(url, link, slug);
                 if (id) return { source: 'tvdb', id: String(id), type: 'tv', term: `tvdb:${id}` };
+                if (legacyPath) return null;
 
                 const title = titleFromTVDBLink(link, url, container);
-                return title ? { source: 'tvdb', id: seriesPath[1], type: 'tv', term: title } : null;
+                return title ? { source: 'tvdb', id: slug, type: 'tv', term: title } : null;
             }
 
             return null;
@@ -221,20 +247,25 @@
         return link.closest('article, li, [role="article"], [role="listitem"]') || link.parentElement;
     }
 
-    function guessType(link, container) {
+    function hasTVEvidenceForLink(link, container) {
         const linkContext = [
-            link.textContent,
+            textWithoutControls(link),
             link.title,
             link.getAttribute('aria-label'),
-            link.parentElement?.textContent
+            textWithoutControls(link.parentElement)
         ].filter(Boolean).join(' ');
-        if (hasTVEvidence(linkContext)) return 'tv';
-        const containerText = container?.innerText || container?.textContent || '';
-        return hasTVEvidence(containerText) ? 'tv' : 'movie';
+        if (hasTVEvidence(linkContext)) return true;
+        return hasTVEvidence(textWithoutControls(container));
+    }
+
+    function serviceTypes(reference, tvEvidence = false) {
+        if (reference.type === 'tv') return ['tv'];
+        if (reference.type === 'movie') return ['movie'];
+        return tvEvidence ? ['tv'] : ['movie', 'tv'];
     }
 
     function linkPlacementScore(link) {
-        const text = (link.textContent || '').trim();
+        const text = textWithoutControls(link);
         let score = Math.min(text.length, 60);
         if (link.querySelector('h1, h2, h3, h4, [role="heading"]')) score += 200;
         if (link.closest('h1, h2, h3, h4, [role="heading"]')) score += 150;
@@ -247,18 +278,8 @@
         return `${reference.source}:${reference.id}:${reference.type || 'unknown'}`;
     }
 
-    function preferredLinkForTitle(link, container, reference) {
-        const key = referenceKey(reference);
-        const candidates = Array.from(container.querySelectorAll(LINK_SELECTOR))
-            .filter(candidate => {
-                const candidateReference = extractMediaReference(candidate, container);
-                return candidateReference && referenceKey(candidateReference) === key;
-            });
-        if (!candidates.length) return link;
-        return candidates.reduce((best, candidate) =>
-            linkPlacementScore(candidate) > linkPlacementScore(best) ? candidate : best
-        );
-    }
+    const controlState = new WeakMap();
+    const knownContainers = new WeakSet();
 
     function findPlacementTarget(link, container) {
         if (location.hostname.includes('google.')) {
@@ -267,25 +288,36 @@
         return link;
     }
 
-    function createMDBListButton(reference, type, link, container) {
+    function isCurrentPlacement(wrapper, link, container) {
+        const target = findPlacementTarget(link, container);
+        if (target.matches('h1, h2, h3, h4, [role="heading"]')) {
+            return wrapper.parentElement === target;
+        }
+        return wrapper.previousElementSibling === target;
+    }
+
+    function createMDBListButtons(reference, types, link, container, signature) {
         const wrapper = document.createElement('span');
         wrapper.className = 'mdblist-link-wrap';
+        wrapper.dataset.imdbRsControl = 'true';
         wrapper.dataset.mediaKey = referenceKey(reference);
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'mdblist-btn';
-        const service = type === 'tv' ? 'Sonarr' : 'Radarr';
-        const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
-        button.textContent = service;
-        button.title = `Show this title in ${service}`;
-        button.setAttribute('aria-label', button.title);
-        button.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            const term = encodeURIComponent(reference.term);
-            window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
-        });
-        wrapper.appendChild(button);
+        for (const type of types) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mdblist-btn';
+            const service = type === 'tv' ? 'Sonarr' : 'Radarr';
+            const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
+            button.textContent = service;
+            button.title = `Show this title in ${service}`;
+            button.setAttribute('aria-label', button.title);
+            button.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                const term = encodeURIComponent(reference.term);
+                window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
+            });
+            wrapper.appendChild(button);
+        }
 
         const target = findPlacementTarget(link, container);
         if (target.matches('h1, h2, h3, h4, [role="heading"]')) {
@@ -293,39 +325,187 @@
         } else {
             target.insertAdjacentElement('afterend', wrapper);
         }
+        controlState.set(wrapper, {
+            container,
+            owner: link,
+            ownerHref: link.href,
+            signature
+        });
+        return wrapper;
     }
 
-    function processLink(link) {
-        if (!(link instanceof HTMLAnchorElement)) return;
-        if (link.getAttribute(ADDED_ATTRIBUTE) === 'true') return;
-        const container = findResultContainer(link);
-        if (!container) return;
-        const reference = extractMediaReference(link, container);
-        if (!reference) return;
-        if (preferredLinkForTitle(link, container, reference) !== link) return;
-
-        const mediaKey = referenceKey(reference);
-        const duplicate = Array.from(container.querySelectorAll('.mdblist-link-wrap'))
-            .some(element => element.dataset.mediaKey === mediaKey);
-        link.setAttribute(ADDED_ATTRIBUTE, 'true');
-        if (duplicate) return;
-        createMDBListButton(reference, reference.type || guessType(link, container), link, container);
+    function linksInContainer(container) {
+        const links = [];
+        if (container.matches?.(LINK_SELECTOR)) links.push(container);
+        links.push(...container.querySelectorAll(LINK_SELECTOR));
+        return links;
     }
 
-    function processLinks(context = document) {
-        if (!(context instanceof Document || context instanceof Element)) return;
-        if (context instanceof Element && context.matches(LINK_SELECTOR)) processLink(context);
-        context.querySelectorAll(LINK_SELECTOR).forEach(processLink);
+    function reconcileContainer(container) {
+        if (!(container instanceof Element) || !container.isConnected) return;
+        knownContainers.add(container);
+
+        const groups = new Map();
+        for (const link of linksInContainer(container)) {
+            if (!(link instanceof HTMLAnchorElement)) continue;
+            const reference = extractMediaReference(link, container);
+            if (!reference) continue;
+            const key = referenceKey(reference);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push({ link, reference });
+        }
+
+        const managedControls = Array.from(container.querySelectorAll(CONTROL_SELECTOR))
+            .filter(wrapper => controlState.get(wrapper)?.container === container);
+        const controlsByKey = new Map();
+        for (const wrapper of managedControls) {
+            const key = wrapper.dataset.mediaKey || '';
+            if (!controlsByKey.has(key)) controlsByKey.set(key, []);
+            controlsByKey.get(key).push(wrapper);
+        }
+
+        for (const wrapper of managedControls) {
+            if (!groups.has(wrapper.dataset.mediaKey || '')) wrapper.remove();
+        }
+
+        for (const [key, candidates] of groups) {
+            const preferred = candidates.reduce((best, candidate) =>
+                linkPlacementScore(candidate.link) > linkPlacementScore(best.link) ? candidate : best
+            );
+            const types = serviceTypes(
+                preferred.reference,
+                hasTVEvidenceForLink(preferred.link, container)
+            );
+            const signature = JSON.stringify({
+                key,
+                term: preferred.reference.term,
+                types
+            });
+            const existing = controlsByKey.get(key) || [];
+            let current = existing.find(wrapper => {
+                const state = controlState.get(wrapper);
+                return state?.owner === preferred.link
+                    && state.ownerHref === preferred.link.href
+                    && state.signature === signature
+                    && isCurrentPlacement(wrapper, preferred.link, container);
+            });
+            for (const wrapper of existing) {
+                if (wrapper !== current) wrapper.remove();
+            }
+            if (!current) {
+                current = createMDBListButtons(
+                    preferred.reference,
+                    types,
+                    preferred.link,
+                    container,
+                    signature
+                );
+            }
+        }
+    }
+
+    function collectKnownContainer(element, containers) {
+        for (let current = element; current; current = current.parentElement) {
+            if (knownContainers.has(current)) {
+                containers.add(current);
+                return;
+            }
+        }
+    }
+
+    function collectContainers(root, containers) {
+        if (!(root instanceof Document || root instanceof Element)) return;
+        if (root instanceof Element) collectKnownContainer(root, containers);
+
+        const links = [];
+        if (root instanceof Element && root.matches(LINK_SELECTOR)) links.push(root);
+        links.push(...root.querySelectorAll(LINK_SELECTOR));
+        for (const link of links) {
+            if (!(link instanceof HTMLAnchorElement)) continue;
+            const container = findResultContainer(link);
+            if (container) containers.add(container);
+        }
+    }
+
+    function processRoots(roots) {
+        const containers = new Set();
+        for (const root of roots) collectContainers(root, containers);
+        for (const container of containers) reconcileContainer(container);
+    }
+
+    let queuedRoots = new Set();
+    let flushScheduled = false;
+
+    function flushQueuedRoots() {
+        flushScheduled = false;
+        const roots = Array.from(queuedRoots).filter(root =>
+            (root instanceof Document) || (root instanceof Element && root.isConnected)
+        );
+        queuedRoots = new Set();
+        const outermostRoots = roots.filter(root => !roots.some(other =>
+            other !== root && typeof other.contains === 'function' && other.contains(root)
+        ));
+        processRoots(outermostRoots);
+    }
+
+    function queueRoot(root) {
+        if (!(root instanceof Document || root instanceof Element)) return;
+        queuedRoots.add(root);
+        if (flushScheduled) return;
+        flushScheduled = true;
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(flushQueuedRoots);
+        } else {
+            setTimeout(flushQueuedRoots, 16);
+        }
+    }
+
+    function queueContainingKnownContainer(element) {
+        for (let current = element; current; current = current.parentElement) {
+            if (knownContainers.has(current)) {
+                queueRoot(current);
+                return;
+            }
+        }
+    }
+
+    if (loaderConfig.testMode === true
+        && globalThis.__IMDB_RS_TEST_HOOK__
+        && typeof globalThis.__IMDB_RS_TEST_HOOK__ === 'object') {
+        Object.assign(globalThis.__IMDB_RS_TEST_HOOK__, {
+            buildLinkSelector,
+            extractMediaReference,
+            hasTVEvidence,
+            referenceKey,
+            serviceTypes
+        });
+        return;
     }
 
     addStyles();
-    processLinks();
+    processRoots([document]);
     const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
+            if (mutation.type === 'attributes') {
+                queueRoot(mutation.target);
+                continue;
+            }
+            if (mutation.type === 'characterData') {
+                queueContainingKnownContainer(mutation.target.parentElement);
+                continue;
+            }
+
+            queueContainingKnownContainer(mutation.target);
             for (const node of mutation.addedNodes) {
-                if (node instanceof Element) processLinks(node);
+                if (node instanceof Element) queueRoot(node);
             }
         }
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['href'],
+        characterData: true,
+        childList: true,
+        subtree: true
+    });
 })();
