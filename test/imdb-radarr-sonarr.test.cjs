@@ -115,3 +115,37 @@ test('ambiguous IMDb links offer both services while explicit TV evidence select
         ['movie']
     );
 });
+
+test('control signatures are stable across separate core evaluations', () => {
+    const reference = { source: 'tvdb', id: 'the-dispatcher', type: 'tv', term: 'Last Seen' };
+    const expected = JSON.stringify({
+        key: 'tvdb:the-dispatcher:tv',
+        term: 'Last Seen',
+        types: ['tv']
+    });
+    assert.equal(
+        hook.controlSignature('tvdb:the-dispatcher:tv', reference, ['tv']),
+        expected
+    );
+    assert.equal(
+        loadTestHook().controlSignature('tvdb:the-dispatcher:tv', reference, ['tv']),
+        expected
+    );
+
+    const existingControlFromAnotherEvaluation = {
+        dataset: {
+            ownerHref: 'https://www.thetvdb.com/series/the-dispatcher',
+            signature: expected
+        }
+    };
+    assert.equal(hook.hasMatchingControlMetadata(
+        existingControlFromAnotherEvaluation,
+        link('https://www.thetvdb.com/series/the-dispatcher'),
+        expected
+    ), true);
+    assert.equal(hook.hasMatchingControlMetadata(
+        existingControlFromAnotherEvaluation,
+        link('https://www.thetvdb.com/series/the-dispatcher'),
+        `${expected}-stale`
+    ), false);
+});
