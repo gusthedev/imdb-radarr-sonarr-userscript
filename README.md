@@ -1,6 +1,6 @@
 # IMDb to Radarr/Sonarr Userscript
 
-This repository contains the shared, endpoint-free core for a Tampermonkey userscript that adds Radarr and Sonarr buttons beside IMDb, TMDB, and TVDB title links.
+This repository contains the shared, endpoint-free core for a Tampermonkey userscript that adds Radarr and Sonarr buttons beside canonical IMDb, TMDB, and TVDB title links.
 
 ## Privacy model
 
@@ -13,7 +13,7 @@ The public core contains no Radarr or Sonarr hostname, credential, token, or API
 3. Add any private domains on which the script should not run to `excludedDomains`.
 4. Save the loader and disable older copies of the full userscript.
 
-The loader retrieves the current core from this repository whenever it runs. This makes the GitHub repository a trusted code source; review repository changes and protect the GitHub account with strong authentication.
+The loader runs a validated last-known-good cached core immediately, checks this repository for updates at most hourly using conditional requests, and falls back to the cached core if GitHub is unavailable. A Tampermonkey menu command can check for updates on demand; newly cached updates take effect on the next page load. This makes the GitHub repository a trusted code source, so review repository changes and protect the GitHub account with strong authentication.
 
 ## Configuration
 
@@ -25,7 +25,14 @@ No API keys are needed. The script opens the normal Radarr or Sonarr add screen 
 
 ## Supported links
 
-- IMDb title links use `imdb:<id>` and retain the script's surrounding-text movie/TV detection.
-- TMDB `/movie/<id>` links open Radarr using `tmdb:<id>`.
-- TMDB `/tv/<id>` links open Sonarr using `tmdb:<id>`.
-- TVDB series links open Sonarr. A numeric TVDB ID is used when the URL or nearby link metadata exposes one; modern slug-only TVDB links fall back to a normal title search.
+- Canonical IMDb `/title/<id>` links use `imdb:<id>`. Explicit TV context opens Sonarr; ambiguous results display both Radarr and Sonarr choices.
+- Canonical TMDB `/movie/<id>-<optional-slug>` links open Radarr using `tmdb:<id>`.
+- Canonical TMDB `/tv/<id>-<optional-slug>` links open Sonarr using `tmdb:<id>`. An optional locale prefix such as `/pt-BR/` is supported.
+- Canonical TVDB `/series/<id-or-slug>` links open Sonarr. Numeric IDs use `tvdb:<id>`; slug-only links fall back to a normal title search.
+- Legacy TVDB series URLs such as `/?tab=series&id=<id>` and `/?tab=series&seriesid=<id>` use the exact numeric TVDB ID.
+
+Episode, season, cast, person, and other descendant pages are intentionally ignored so their labels cannot be mistaken for title names.
+
+## Development checks
+
+Run `npm test` with Node.js to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, and ambiguous IMDb routing.

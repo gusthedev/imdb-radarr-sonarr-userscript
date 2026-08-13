@@ -1,0 +1,7 @@
+{
+  "name": "imdb-radarr-sonarr-userscript",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
