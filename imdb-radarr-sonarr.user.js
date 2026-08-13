@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.1
+// @version      5.3.2
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -267,6 +267,52 @@
         return tvEvidence ? ['tv'] : ['movie', 'tv'];
     }
 
+    function normalizeComparableTitle(value) {
+        return String(value || '')
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/\s*[-–—|]\s*(?:imdb|tmdb|themoviedb|thetvdb)(?:\.com)?\s*$/i, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+    }
+
+    function comparableTitleForLink(link, container) {
+        const heading = link.querySelector?.('h1, h2, h3, h4, [role="heading"]')
+            || container?.querySelector?.('h1, h2, h3, h4, [role="heading"]');
+        return normalizeComparableTitle(textWithoutControls(heading));
+    }
+
+    function peerTypesForTitle(targetTitle, peers) {
+        const types = new Set();
+        for (const peer of peers) {
+            if (peer.title === targetTitle && ['movie', 'tv'].includes(peer.type)) {
+                types.add(peer.type);
+            }
+        }
+        return ['movie', 'tv'].filter(type => types.has(type));
+    }
+
+    function explicitPeerTypes(link, container) {
+        if (!location.hostname.includes('google.') && !location.hostname.includes('duckduckgo.com')) {
+            return [];
+        }
+        const targetTitle = comparableTitleForLink(link, container);
+        if (!targetTitle) return [];
+
+        const peers = [];
+        for (const candidate of document.querySelectorAll(LINK_SELECTOR)) {
+            if (!(candidate instanceof HTMLAnchorElement) || candidate === link) continue;
+            const candidateContainer = findResultContainer(candidate);
+            if (!candidateContainer) continue;
+            const reference = extractMediaReference(candidate, candidateContainer);
+            if (!reference?.type) continue;
+            const title = comparableTitleForLink(candidate, candidateContainer);
+            if (title) peers.push({ title, type: reference.type });
+        }
+        return peerTypesForTitle(targetTitle, peers);
+    }
+
     function linkPlacementScore(link) {
         const text = textWithoutControls(link);
         let score = Math.min(text.length, 60);
@@ -399,10 +445,15 @@
             const preferred = candidates.reduce((best, candidate) =>
                 linkPlacementScore(candidate.link) > linkPlacementScore(best.link) ? candidate : best
             );
-            const types = serviceTypes(
-                preferred.reference,
-                hasTVEvidenceForLink(preferred.link, container)
-            );
+            const peerTypes = preferred.reference.type
+                ? []
+                : explicitPeerTypes(preferred.link, container);
+            const types = peerTypes.length
+                ? peerTypes
+                : serviceTypes(
+                    preferred.reference,
+                    hasTVEvidenceForLink(preferred.link, container)
+                );
             const signature = controlSignature(key, preferred.reference, types);
             const existing = controlsByKey.get(key) || [];
             let current = existing.find(wrapper =>
@@ -499,6 +550,8 @@
             extractMediaReference,
             hasMatchingControlMetadata,
             hasTVEvidence,
+            normalizeComparableTitle,
+            peerTypesForTitle,
             referenceKey,
             serviceTypes
         });
@@ -531,5 +584,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.1' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.2' });
 })();

@@ -149,3 +149,22 @@ test('control signatures are stable across separate core evaluations', () => {
         `${expected}-stale`
     ), false);
 });
+
+test('matching explicit peer results classify otherwise ambiguous IMDb titles', () => {
+    assert.equal(
+        hook.normalizeComparableTitle('The Social Reckoning (2026) - TMDB'),
+        'the social reckoning 2026'
+    );
+    assert.equal(
+        hook.normalizeComparableTitle('The Social Reckoning (2026)'),
+        'the social reckoning 2026'
+    );
+    assert.deepEqual(plain(hook.peerTypesForTitle('the social reckoning 2026', [
+        { title: 'the social reckoning 2026', type: 'movie' },
+        { title: 'another title 2026', type: 'tv' }
+    ])), ['movie']);
+    assert.deepEqual(plain(hook.peerTypesForTitle('shared title 2026', [
+        { title: 'shared title 2026', type: 'tv' },
+        { title: 'shared title 2026', type: 'movie' }
+    ])), ['movie', 'tv']);
+});
