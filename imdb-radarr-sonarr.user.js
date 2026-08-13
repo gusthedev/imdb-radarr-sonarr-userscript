@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.0
+// @version      5.3.1
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -15,6 +15,9 @@
 
 (function () {
     'use strict';
+
+    const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
+    if (globalThis[INSTANCE_KEY]) return;
 
     const loaderConfig = typeof globalThis.IMDB_RS_CONFIG === 'object' && globalThis.IMDB_RS_CONFIG
         ? globalThis.IMDB_RS_CONFIG
@@ -278,6 +281,10 @@
         return `${reference.source}:${reference.id}:${reference.type || 'unknown'}`;
     }
 
+    function controlSignature(key, reference, types) {
+        return JSON.stringify({ key, term: reference.term, types });
+    }
+
     const controlState = new WeakMap();
     const knownContainers = new WeakSet();
 
@@ -294,6 +301,29 @@
             return wrapper.parentElement === target;
         }
         return wrapper.previousElementSibling === target;
+    }
+
+    function rememberControl(wrapper, link, container, signature) {
+        wrapper.dataset.ownerHref = link.href;
+        wrapper.dataset.signature = signature;
+        controlState.set(wrapper, {
+            container,
+            owner: link,
+            ownerHref: link.href,
+            signature
+        });
+    }
+
+    function hasMatchingControlMetadata(wrapper, link, signature) {
+        const state = controlState.get(wrapper);
+        const ownerHref = wrapper.dataset.ownerHref || state?.ownerHref || '';
+        const storedSignature = wrapper.dataset.signature || state?.signature || '';
+        return ownerHref === link.href && storedSignature === signature;
+    }
+
+    function isReusableControl(wrapper, link, container, signature) {
+        return hasMatchingControlMetadata(wrapper, link, signature)
+            && isCurrentPlacement(wrapper, link, container);
     }
 
     function createMDBListButtons(reference, types, link, container, signature) {
@@ -325,12 +355,7 @@
         } else {
             target.insertAdjacentElement('afterend', wrapper);
         }
-        controlState.set(wrapper, {
-            container,
-            owner: link,
-            ownerHref: link.href,
-            signature
-        });
+        rememberControl(wrapper, link, container, signature);
         return wrapper;
     }
 
@@ -355,8 +380,10 @@
             groups.get(key).push({ link, reference });
         }
 
-        const managedControls = Array.from(container.querySelectorAll(CONTROL_SELECTOR))
-            .filter(wrapper => controlState.get(wrapper)?.container === container);
+        // Treat matching controls as shared DOM state, not as private state owned by
+        // this particular evaluation. This lets a second loader/core evaluation
+        // adopt the existing control instead of creating an identical neighbor.
+        const managedControls = Array.from(container.querySelectorAll(CONTROL_SELECTOR));
         const controlsByKey = new Map();
         for (const wrapper of managedControls) {
             const key = wrapper.dataset.mediaKey || '';
@@ -376,19 +403,11 @@
                 preferred.reference,
                 hasTVEvidenceForLink(preferred.link, container)
             );
-            const signature = JSON.stringify({
-                key,
-                term: preferred.reference.term,
-                types
-            });
+            const signature = controlSignature(key, preferred.reference, types);
             const existing = controlsByKey.get(key) || [];
-            let current = existing.find(wrapper => {
-                const state = controlState.get(wrapper);
-                return state?.owner === preferred.link
-                    && state.ownerHref === preferred.link.href
-                    && state.signature === signature
-                    && isCurrentPlacement(wrapper, preferred.link, container);
-            });
+            let current = existing.find(wrapper =>
+                isReusableControl(wrapper, preferred.link, container, signature)
+            );
             for (const wrapper of existing) {
                 if (wrapper !== current) wrapper.remove();
             }
@@ -400,6 +419,8 @@
                     container,
                     signature
                 );
+            } else {
+                rememberControl(current, preferred.link, container, signature);
             }
         }
     }
@@ -474,7 +495,9 @@
         && typeof globalThis.__IMDB_RS_TEST_HOOK__ === 'object') {
         Object.assign(globalThis.__IMDB_RS_TEST_HOOK__, {
             buildLinkSelector,
+            controlSignature,
             extractMediaReference,
+            hasMatchingControlMetadata,
             hasTVEvidence,
             referenceKey,
             serviceTypes
@@ -508,4 +531,5 @@
         childList: true,
         subtree: true
     });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.1' });
 })();
