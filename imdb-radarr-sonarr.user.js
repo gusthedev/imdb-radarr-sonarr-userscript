@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.2
+// @version      5.3.3
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -89,6 +89,22 @@
         /\bep\.?\s*\d{1,3}\b/i,
         /\bs\d{1,2}e\d{1,3}\b/i
     ];
+
+    // Safari userscript managers can expose DOM nodes through cross-realm
+    // wrappers. Node-type and tag-name checks work across those boundaries,
+    // while `instanceof Element` / `HTMLAnchorElement` may silently fail.
+    function isDocumentNode(value) {
+        return Boolean(value) && value.nodeType === 9;
+    }
+
+    function isElementNode(value) {
+        return Boolean(value) && value.nodeType === 1
+            && typeof value.querySelectorAll === 'function';
+    }
+
+    function isAnchorNode(value) {
+        return isElementNode(value) && String(value.tagName || '').toUpperCase() === 'A';
+    }
 
     function addStyles() {
         if (document.getElementById('mdblist-userscript-styles')) return;
@@ -302,7 +318,7 @@
 
         const peers = [];
         for (const candidate of document.querySelectorAll(LINK_SELECTOR)) {
-            if (!(candidate instanceof HTMLAnchorElement) || candidate === link) continue;
+            if (!isAnchorNode(candidate) || candidate === link) continue;
             const candidateContainer = findResultContainer(candidate);
             if (!candidateContainer) continue;
             const reference = extractMediaReference(candidate, candidateContainer);
@@ -413,12 +429,12 @@
     }
 
     function reconcileContainer(container) {
-        if (!(container instanceof Element) || !container.isConnected) return;
+        if (!isElementNode(container) || !container.isConnected) return;
         knownContainers.add(container);
 
         const groups = new Map();
         for (const link of linksInContainer(container)) {
-            if (!(link instanceof HTMLAnchorElement)) continue;
+            if (!isAnchorNode(link)) continue;
             const reference = extractMediaReference(link, container);
             if (!reference) continue;
             const key = referenceKey(reference);
@@ -486,14 +502,14 @@
     }
 
     function collectContainers(root, containers) {
-        if (!(root instanceof Document || root instanceof Element)) return;
-        if (root instanceof Element) collectKnownContainer(root, containers);
+        if (!(isDocumentNode(root) || isElementNode(root))) return;
+        if (isElementNode(root)) collectKnownContainer(root, containers);
 
         const links = [];
-        if (root instanceof Element && root.matches(LINK_SELECTOR)) links.push(root);
+        if (isElementNode(root) && root.matches(LINK_SELECTOR)) links.push(root);
         links.push(...root.querySelectorAll(LINK_SELECTOR));
         for (const link of links) {
-            if (!(link instanceof HTMLAnchorElement)) continue;
+            if (!isAnchorNode(link)) continue;
             const container = findResultContainer(link);
             if (container) containers.add(container);
         }
@@ -511,7 +527,7 @@
     function flushQueuedRoots() {
         flushScheduled = false;
         const roots = Array.from(queuedRoots).filter(root =>
-            (root instanceof Document) || (root instanceof Element && root.isConnected)
+            isDocumentNode(root) || (isElementNode(root) && root.isConnected)
         );
         queuedRoots = new Set();
         const outermostRoots = roots.filter(root => !roots.some(other =>
@@ -521,7 +537,7 @@
     }
 
     function queueRoot(root) {
-        if (!(root instanceof Document || root instanceof Element)) return;
+        if (!(isDocumentNode(root) || isElementNode(root))) return;
         queuedRoots.add(root);
         if (flushScheduled) return;
         flushScheduled = true;
@@ -550,6 +566,9 @@
             extractMediaReference,
             hasMatchingControlMetadata,
             hasTVEvidence,
+            isAnchorNode,
+            isDocumentNode,
+            isElementNode,
             normalizeComparableTitle,
             peerTypesForTitle,
             referenceKey,
@@ -573,7 +592,7 @@
 
             queueContainingKnownContainer(mutation.target);
             for (const node of mutation.addedNodes) {
-                if (node instanceof Element) queueRoot(node);
+                if (isElementNode(node)) queueRoot(node);
             }
         }
     });
@@ -584,5 +603,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.2' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.3' });
 })();

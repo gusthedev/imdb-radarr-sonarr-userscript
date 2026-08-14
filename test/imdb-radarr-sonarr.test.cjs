@@ -168,3 +168,18 @@ test('matching explicit peer results classify otherwise ambiguous IMDb titles', 
         { title: 'shared title 2026', type: 'movie' }
     ])), ['movie', 'tv']);
 });
+
+test('recognizes cross-realm DOM wrappers without instanceof checks', () => {
+    const documentWrapper = { nodeType: 9 };
+    const elementWrapper = { nodeType: 1, querySelectorAll() {} };
+    const anchorWrapper = {
+        nodeType: 1,
+        tagName: 'a',
+        querySelectorAll() {}
+    };
+
+    assert.equal(hook.isDocumentNode(documentWrapper), true);
+    assert.equal(hook.isElementNode(elementWrapper), true);
+    assert.equal(hook.isAnchorNode(anchorWrapper), true);
+    assert.equal(hook.isAnchorNode({ ...anchorWrapper, tagName: 'DIV' }), false);
+});
