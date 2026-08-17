@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.2.0
+// @version      1.2.1
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -32,6 +32,7 @@
     const UPDATE_INTERVAL = 60 * 60 * 1000;
     const EMPTY_CACHE_RETRY_INTERVAL = 5 * 60 * 1000;
     const REQUEST_TIMEOUT = 15_000;
+    const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     const STORAGE = Object.freeze({
         source: 'imdbRsLoader.sharedCore.source.v1',
         etag: 'imdbRsLoader.sharedCore.etag.v1',
@@ -71,12 +72,17 @@
     }
 
     function executeSharedCore(source) {
+        if (globalThis[INSTANCE_KEY]) return true;
         if (executionAttempted || !isValidSharedCore(source)) return false;
         executionAttempted = true;
         try {
             eval(`${source}\n//# sourceURL=imdb-radarr-sonarr.user.js`);
-            return true;
+            if (globalThis[INSTANCE_KEY]) return true;
+            executionAttempted = false;
+            console.warn('[IMDb to Radarr/Sonarr loader] The shared script returned without initializing; it can be retried.');
+            return false;
         } catch (error) {
+            executionAttempted = false;
             console.error('[IMDb to Radarr/Sonarr loader] Could not start the shared script.', error);
             return false;
         }
@@ -125,6 +131,7 @@
                 updateInFlight = false;
 
                 if (response.status === 304 && previousSource) {
+                    executeSharedCore(previousSource);
                     if (manual) notifyManual(`The shared core is current (${sharedCoreVersion(previousSource)}).`);
                     return;
                 }
@@ -145,7 +152,9 @@
                 if (nextEtag) GM_setValue(STORAGE.etag, nextEtag);
                 else GM_deleteValue(STORAGE.etag);
 
-                if (executeIfEmpty && !previousSource) executeSharedCore(nextSource);
+                if ((executeIfEmpty && !previousSource) || !globalThis[INSTANCE_KEY]) {
+                    executeSharedCore(nextSource);
+                }
 
                 const version = sharedCoreVersion(nextSource);
                 if (manual) {

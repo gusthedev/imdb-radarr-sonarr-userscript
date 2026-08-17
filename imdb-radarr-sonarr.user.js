@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.3
+// @version      5.3.4
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -579,6 +579,19 @@
 
     addStyles();
     processRoots([document]);
+
+    // Search pages often finish hydrating after document-idle without producing
+    // a mutation that contains the final canonical link. A few bounded rescans
+    // cover that startup window, and returning to the tab provides a cheap
+    // recovery point without running a permanent polling loop.
+    const reconcilePage = () => queueRoot(document);
+    for (const delay of [250, 1_000, 3_000]) setTimeout(reconcilePage, delay);
+    globalThis.addEventListener?.('pageshow', reconcilePage);
+    globalThis.addEventListener?.('focus', reconcilePage);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) reconcilePage();
+    });
+
     const observer = new MutationObserver(mutations => {
         for (const mutation of mutations) {
             if (mutation.type === 'attributes') {
@@ -603,5 +616,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.3' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.4' });
 })();
