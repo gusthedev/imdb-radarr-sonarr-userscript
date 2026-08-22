@@ -183,3 +183,17 @@ test('recognizes cross-realm DOM wrappers without instanceof checks', () => {
     assert.equal(hook.isAnchorNode(anchorWrapper), true);
     assert.equal(hook.isAnchorNode({ ...anchorWrapper, tagName: 'DIV' }), false);
 });
+
+test('revisits a child-list mutation target when Google completes a result in stages', () => {
+    const resultContainer = { nodeType: 1, querySelectorAll() {} };
+    const addedHeading = { nodeType: 1, querySelectorAll() {} };
+    const textNode = { nodeType: 3 };
+
+    const roots = hook.childListRoots({
+        target: resultContainer,
+        addedNodes: [addedHeading, textNode]
+    });
+    assert.equal(roots.length, 2);
+    assert.equal(roots[0], resultContainer);
+    assert.equal(roots[1], addedHeading);
+});

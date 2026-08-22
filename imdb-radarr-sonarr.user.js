@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.4
+// @version      5.3.5
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -557,6 +557,15 @@
         }
     }
 
+    function childListRoots(mutation) {
+        const roots = [];
+        if (isElementNode(mutation.target)) roots.push(mutation.target);
+        for (const node of mutation.addedNodes || []) {
+            if (isElementNode(node)) roots.push(node);
+        }
+        return roots;
+    }
+
     if (loaderConfig.testMode === true
         && globalThis.__IMDB_RS_TEST_HOOK__
         && typeof globalThis.__IMDB_RS_TEST_HOOK__ === 'object') {
@@ -567,6 +576,7 @@
             hasMatchingControlMetadata,
             hasTVEvidence,
             isAnchorNode,
+            childListRoots,
             isDocumentNode,
             isElementNode,
             normalizeComparableTitle,
@@ -604,9 +614,10 @@
             }
 
             queueContainingKnownContainer(mutation.target);
-            for (const node of mutation.addedNodes) {
-                if (isElementNode(node)) queueRoot(node);
-            }
+            // Safari can expose a Google result in separate mutation batches:
+            // first the canonical link, then its heading as a sibling. Queueing
+            // the mutation target revisits that now-complete result subtree.
+            for (const root of childListRoots(mutation)) queueRoot(root);
         }
     });
     observer.observe(document.documentElement, {
@@ -616,5 +627,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.4' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.5' });
 })();
