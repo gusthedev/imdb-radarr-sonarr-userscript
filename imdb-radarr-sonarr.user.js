@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.4.0
+// @version      5.4.1
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -364,12 +364,52 @@
     const controlState = new WeakMap();
     const knownContainers = new WeakSet();
 
+    function isVerticallyFlipped(element) {
+        if (!element) return false;
+        let transform = element.style?.transform || '';
+        try {
+            if (typeof globalThis.getComputedStyle === 'function') {
+                transform = globalThis.getComputedStyle(element).transform || transform;
+            }
+        } catch {
+            // Cross-realm DOM wrappers can reject computed-style inspection.
+        }
+        if (/scaleY\(\s*-/.test(transform)) return true;
+        const matrix = transform.match(/^matrix\(([^)]+)\)$/);
+        if (!matrix) return false;
+        const values = matrix[1].split(',').map(Number);
+        return values.length === 6 && Number.isFinite(values[3]) && values[3] < 0;
+    }
+
     function findPlacementTarget(link, container) {
-        // Keep buttons outside linked headings. A button nested inside Google's
-        // result anchor is invalid interactive markup and can be reparented or
-        // removed when Google hydrates the result.
-        if (location.hostname.includes('google.')) return link;
+        if (location.hostname.includes('google.')
+            && link.querySelector?.('h1, h2, h3, h4, [role="heading"]')) {
+            // Google currently flips part of each organic-result header to
+            // reorder the site line and title, then overlays its three-dot menu
+            // on that same block. Inserting beside the link inherits the flip
+            // and collides with the menu. Place controls after the whole header
+            // instead; this also keeps buttons outside the result anchor.
+            for (let node = link.parentElement, depth = 0;
+                node && depth < 4;
+                node = node.parentElement, depth += 1) {
+                if (isVerticallyFlipped(node)) return node.parentElement || link;
+                if (node === container) break;
+            }
+        }
         return link;
+    }
+
+    function controlSearchScope(container) {
+        if (location.hostname.includes('google.')) {
+            for (let node = container, depth = 0;
+                node && depth < 4;
+                node = node.parentElement, depth += 1) {
+                if (isVerticallyFlipped(node)) {
+                    return node.parentElement?.parentElement || node.parentElement || container;
+                }
+            }
+        }
+        return container;
     }
 
     function isCurrentPlacement(wrapper, link, container) {
@@ -453,7 +493,7 @@
         // Treat matching controls as shared DOM state, not as private state owned by
         // this particular evaluation. This lets a second loader/core evaluation
         // adopt the existing control instead of creating an identical neighbor.
-        const managedControls = Array.from(container.querySelectorAll(CONTROL_SELECTOR));
+        const managedControls = Array.from(controlSearchScope(container).querySelectorAll(CONTROL_SELECTOR));
         const controlsByKey = new Map();
         for (const wrapper of managedControls) {
             const key = wrapper.dataset.mediaKey || '';
@@ -584,6 +624,7 @@
             controlSignature,
             extractMediaReference,
             findPlacementTarget,
+            controlSearchScope,
             hasMatchingControlMetadata,
             hasTVEvidence,
             isAnchorNode,
@@ -632,5 +673,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.4.0' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.4.1' });
 })();
