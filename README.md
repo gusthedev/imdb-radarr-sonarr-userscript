@@ -13,12 +13,13 @@ The public core contains no Radarr or Sonarr hostname, credential, token, or API
 3. Add any private domains on which the script should not run to `excludedDomains`.
 4. Save the loader and disable older copies of the full userscript.
 
-The loader runs a validated last-known-good cached core immediately, checks this repository for updates at most hourly using conditional requests, and falls back to the cached core if GitHub is unavailable. A Tampermonkey menu command can check for updates on demand; newly cached updates take effect on the next page load. This makes the GitHub repository a trusted code source, so review repository changes and protect the GitHub account with strong authentication.
+The loader runs a validated last-known-good cached core immediately, checks this repository for updates at most hourly using conditional requests, and falls back to a separate rollback core if a newly cached version cannot initialize. Tampermonkey menu commands can bypass caches for an update check, show active/cached/rollback versions, and choose how ambiguous IMDb links behave. Newly cached updates take effect on the next page load. This makes the GitHub repository a trusted code source, so review repository changes and protect the GitHub account with strong authentication.
 
 ## Configuration
 
 - `sonarrBaseUrl`: base URL of the Sonarr instance.
 - `radarrBaseUrl`: base URL of the Radarr instance.
+- `ambiguousImdbBehavior`: `both`, `radarr`, or `sonarr`; it can also be cycled from the Tampermonkey menu.
 - `excludedDomains`: optional domains and subdomains on which the core should immediately stop.
 
 No API keys are needed. The script opens the normal Radarr or Sonarr add screen for manual review.
@@ -35,4 +36,4 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 
 ## Development checks
 
-Run `npm test` with Node.js to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, and ambiguous IMDb routing.
+Run `npm test` with Node.js to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
