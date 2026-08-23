@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function loadTestHook() {
+function loadTestHook(documentOverride) {
     const source = fs.readFileSync(
         path.join(__dirname, '..', 'imdb-radarr-sonarr.user.js'),
         'utf8'
@@ -13,6 +13,7 @@ function loadTestHook() {
     const context = {
         URL,
         console,
+        document: documentOverride,
         location: {
             href: 'https://www.google.com/search?q=title',
             hostname: 'www.google.com'
@@ -114,6 +115,8 @@ test('ambiguous IMDb links offer both services while explicit TV evidence select
         plain(hook.serviceTypes({ source: 'tmdb', id: '550', type: 'movie', term: 'tmdb:550' }, true)),
         ['movie']
     );
+    assert.deepEqual(plain(hook.serviceTypes(imdbReference, false, 'radarr')), ['movie']);
+    assert.deepEqual(plain(hook.serviceTypes(imdbReference, false, 'sonarr')), ['tv']);
 });
 
 test('control signatures are stable across separate core evaluations', () => {
@@ -196,4 +199,34 @@ test('revisits a child-list mutation target when Google completes a result in st
     assert.equal(roots.length, 2);
     assert.equal(roots[0], resultContainer);
     assert.equal(roots[1], addedHeading);
+});
+
+test('Google controls are placed after the owning link, not inside its heading', () => {
+    const owner = link('https://www.imdb.com/title/tt1234567/');
+    const container = { querySelector: () => ({ tagName: 'H3' }) };
+    assert.equal(hook.findPlacementTarget(owner, container), owner);
+});
+
+test('builds one explicit title index for TMDB peers', () => {
+    function candidate(href, title) {
+        const heading = { textContent: title };
+        const container = { querySelector: () => heading };
+        return {
+            href,
+            nodeType: 1,
+            tagName: 'A',
+            dataset: {},
+            parentElement: container,
+            querySelector: () => heading,
+            querySelectorAll: () => [],
+        };
+    }
+    const candidates = [
+        candidate('https://www.themoviedb.org/movie/550-fight-club', 'Fight Club (1999)'),
+        candidate('https://www.themoviedb.org/tv/1396-breaking-bad', 'Breaking Bad (2008)')
+    ];
+    const indexedHook = loadTestHook({ querySelectorAll: () => candidates });
+    const index = indexedHook.buildExplicitPeerIndex();
+    assert.deepEqual(Array.from(index.get('fight club 1999')), ['movie']);
+    assert.deepEqual(Array.from(index.get('breaking bad 2008')), ['tv']);
 });

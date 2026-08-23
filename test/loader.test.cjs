@@ -9,61 +9,142 @@ const loaderSource = fs.readFileSync(
     'utf8'
 );
 
-function sharedCoreSource({ initialize }) {
+const STORAGE = {
+    source: 'imdbRsLoader.sharedCore.source.v1',
+    fallback: 'imdbRsLoader.sharedCore.fallbackSource.v1',
+    etag: 'imdbRsLoader.sharedCore.etag.v1',
+    lastAttempt: 'imdbRsLoader.sharedCore.lastAttempt.v1',
+    rejected: 'imdbRsLoader.sharedCore.rejectedSignature.v1',
+    ambiguous: 'imdbRsLoader.ambiguousBehavior.v1'
+};
+
+function core(version, body = '', initialize = true) {
     return `// ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      99.0.0
+// @version      ${version}
+// @description  Loader fixture
+// ${'validated fixture '.repeat(70)}
 // ==/UserScript==
 void globalThis.IMDB_RS_CONFIG;
-globalThis.__coreRuns = (globalThis.__coreRuns || 0) + 1;
-${initialize ? "globalThis[Symbol.for('shared.imdb.radarr.sonarr.instance')] = {};" : ''}
-/* ${'x'.repeat(1_100)} */`;
+globalThis.__coreRuns = [...(globalThis.__coreRuns || []), '${version}'];
+${body}
+${initialize ? `globalThis[Symbol.for('shared.imdb.radarr.sonarr.instance')] = { version: '${version}' };` : ''}`;
 }
 
-function runLoader(cachedSource) {
-    const storage = new Map([
-        ['imdbRsLoader.sharedCore.source.v1', cachedSource],
-        ['imdbRsLoader.sharedCore.etag.v1', 'etag'],
-        ['imdbRsLoader.sharedCore.lastAttempt.v1', Date.now()]
-    ]);
-    let menuCommand;
-    let request;
+function runLoader({ storageValues = {}, response = null, requestFailure = '' } = {}) {
+    const storage = new Map(Object.entries(storageValues));
+    const requests = [];
+    const menus = new Map();
     const alerts = [];
     const context = {
+        Date,
         URL,
-        Symbol,
-        console,
+        console: { error() {}, info() {}, warn() {} },
+        window: { alert: message => alerts.push(String(message)) },
         GM_getValue: (key, fallback) => storage.has(key) ? storage.get(key) : fallback,
         GM_setValue: (key, value) => storage.set(key, value),
         GM_deleteValue: key => storage.delete(key),
-        GM_registerMenuCommand: (_name, callback) => { menuCommand = callback; },
-        GM_xmlhttpRequest: details => { request = details; },
-        window: { alert: message => alerts.push(message) }
+        GM_registerMenuCommand: (label, callback) => menus.set(label, callback),
+        GM_xmlhttpRequest(request) {
+            requests.push(request);
+            if (requestFailure === 'network') request.onerror(new Error('offline'));
+            else if (requestFailure === 'timeout') request.ontimeout();
+            else if (response) request.onload(response);
+        }
     };
     context.globalThis = context;
     vm.runInNewContext(loaderSource, context, { filename: 'loader.user.js' });
-    return {
-        alerts,
-        context,
-        manualUpdate() {
-            menuCommand();
-            request.onload({ status: 304, responseHeaders: '' });
-        }
-    };
+    return { alerts, context, menus, requests, storage };
 }
 
-test('manual update retries a cached core that returned without initializing', () => {
-    const loader = runLoader(sharedCoreSource({ initialize: false }));
-    assert.equal(loader.context.__coreRuns, 1);
-    loader.manualUpdate();
-    assert.equal(loader.context.__coreRuns, 2);
-    assert.match(loader.alerts.at(-1), /current \(99\.0\.0\)/);
+test('cold install validates, caches, and starts the core', () => {
+    const next = core('5.4.0');
+    const harness = runLoader({
+        response: { status: 200, responseText: next, responseHeaders: 'etag: "540"\r\n' }
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.0']);
+    assert.equal(harness.storage.get(STORAGE.source), next);
+    assert.equal(harness.storage.get(STORAGE.etag), '"540"');
 });
 
-test('manual update does not execute an already running core twice', () => {
-    const loader = runLoader(sharedCoreSource({ initialize: true }));
-    assert.equal(loader.context.__coreRuns, 1);
-    loader.manualUpdate();
-    assert.equal(loader.context.__coreRuns, 1);
+test('fresh cache starts synchronously without a request', () => {
+    const current = core('5.3.5');
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: current, [STORAGE.lastAttempt]: Date.now() }
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.3.5']);
+    assert.equal(harness.requests.length, 0);
+});
+
+test('warm update is saved with rollback without double execution', () => {
+    const current = core('5.3.5');
+    const next = core('5.4.0');
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: current, [STORAGE.etag]: '"535"', [STORAGE.lastAttempt]: 0 },
+        response: { status: 200, responseText: next, responseHeaders: 'etag: "540"\r\n' }
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.3.5']);
+    assert.equal(harness.storage.get(STORAGE.source), next);
+    assert.equal(harness.storage.get(STORAGE.fallback), current);
+});
+
+test('runtime failure restores the rollback core', () => {
+    const broken = core('5.4.0', "throw new Error('broken');");
+    const fallback = core('5.3.5');
+    const harness = runLoader({
+        storageValues: {
+            [STORAGE.source]: broken,
+            [STORAGE.fallback]: fallback,
+            [STORAGE.lastAttempt]: Date.now()
+        }
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.0', '5.3.5']);
+    assert.equal(harness.storage.get(STORAGE.source), fallback);
+    assert.equal(harness.storage.has(STORAGE.fallback), false);
+    assert.equal(harness.storage.has(STORAGE.rejected), true);
+});
+
+test('manual update bypasses caches and status reports all slots', () => {
+    const current = core('5.3.5');
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: current, [STORAGE.etag]: '"535"', [STORAGE.lastAttempt]: Date.now() }
+    });
+    harness.menus.get('Check for shared-core updates now')();
+    const request = harness.requests.at(-1);
+    assert.match(request.url, /\?tm_refresh=\d+$/);
+    assert.equal(request.headers['Cache-Control'], 'no-cache');
+    request.onload({ status: 304, responseHeaders: '' });
+    harness.menus.get('Show shared-core status')();
+    assert.match(harness.alerts.at(-1), /Active: 5\.3\.5/);
+    assert.match(harness.alerts.at(-1), /Cached: 5\.3\.5/);
+});
+
+test('ambiguous IMDb preference cycles and persists', () => {
+    const current = core('5.3.5');
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: current, [STORAGE.lastAttempt]: Date.now() }
+    });
+    harness.menus.get('Cycle ambiguous IMDb action')();
+    assert.equal(harness.storage.get(STORAGE.ambiguous), 'radarr');
+    assert.match(harness.alerts.at(-1), /radarr/);
+});
+
+test('network failure retains the cached core', () => {
+    const current = core('5.3.5');
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: current, [STORAGE.lastAttempt]: 0 },
+        requestFailure: 'network'
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.3.5']);
+    assert.equal(harness.storage.get(STORAGE.source), current);
+});
+
+test('a silent non-initializing core is rejected', () => {
+    const broken = core('5.4.0', '', false);
+    const harness = runLoader({
+        storageValues: { [STORAGE.source]: broken, [STORAGE.lastAttempt]: Date.now() }
+    });
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.0']);
+    assert.equal(harness.storage.has(STORAGE.source), false);
 });

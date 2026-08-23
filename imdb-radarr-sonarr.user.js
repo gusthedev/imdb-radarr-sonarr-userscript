@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.3.5
+// @version      5.4.0
 // @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -51,6 +51,9 @@
         config = Object.freeze({
             sonarrBaseUrl: normalizeBaseUrl(loaderConfig.sonarrBaseUrl, 'Sonarr URL'),
             radarrBaseUrl: normalizeBaseUrl(loaderConfig.radarrBaseUrl, 'Radarr URL'),
+            ambiguousImdbBehavior: ['both', 'radarr', 'sonarr'].includes(loaderConfig.ambiguousImdbBehavior)
+                ? loaderConfig.ambiguousImdbBehavior
+                : 'both',
             excludedDomains: Array.isArray(loaderConfig.excludedDomains)
                 ? loaderConfig.excludedDomains.map(normalizeHostname).filter(Boolean)
                 : []
@@ -277,10 +280,12 @@
         return hasTVEvidence(textWithoutControls(container));
     }
 
-    function serviceTypes(reference, tvEvidence = false) {
+    function serviceTypes(reference, tvEvidence = false, ambiguousBehavior = config?.ambiguousImdbBehavior || 'both') {
         if (reference.type === 'tv') return ['tv'];
         if (reference.type === 'movie') return ['movie'];
-        return tvEvidence ? ['tv'] : ['movie', 'tv'];
+        if (tvEvidence || ambiguousBehavior === 'sonarr') return ['tv'];
+        if (ambiguousBehavior === 'radarr') return ['movie'];
+        return ['movie', 'tv'];
     }
 
     function normalizeComparableTitle(value) {
@@ -309,24 +314,33 @@
         return ['movie', 'tv'].filter(type => types.has(type));
     }
 
-    function explicitPeerTypes(link, container) {
+    function buildExplicitPeerIndex() {
+        const index = new Map();
         if (!location.hostname.includes('google.') && !location.hostname.includes('duckduckgo.com')) {
-            return [];
+            return index;
         }
-        const targetTitle = comparableTitleForLink(link, container);
-        if (!targetTitle) return [];
-
-        const peers = [];
         for (const candidate of document.querySelectorAll(LINK_SELECTOR)) {
-            if (!isAnchorNode(candidate) || candidate === link) continue;
+            if (!isAnchorNode(candidate)) continue;
             const candidateContainer = findResultContainer(candidate);
             if (!candidateContainer) continue;
             const reference = extractMediaReference(candidate, candidateContainer);
             if (!reference?.type) continue;
             const title = comparableTitleForLink(candidate, candidateContainer);
-            if (title) peers.push({ title, type: reference.type });
+            if (!title) continue;
+            if (!index.has(title)) index.set(title, new Set());
+            index.get(title).add(reference.type);
         }
-        return peerTypesForTitle(targetTitle, peers);
+        return index;
+    }
+
+    function explicitPeerTypes(link, container, peerIndex) {
+        if (!location.hostname.includes('google.') && !location.hostname.includes('duckduckgo.com')) {
+            return [];
+        }
+        const targetTitle = comparableTitleForLink(link, container);
+        if (!targetTitle) return [];
+        const types = peerIndex?.get(targetTitle) || new Set();
+        return ['movie', 'tv'].filter(type => types.has(type));
     }
 
     function linkPlacementScore(link) {
@@ -351,17 +365,15 @@
     const knownContainers = new WeakSet();
 
     function findPlacementTarget(link, container) {
-        if (location.hostname.includes('google.')) {
-            return container.querySelector('h3') || link;
-        }
+        // Keep buttons outside linked headings. A button nested inside Google's
+        // result anchor is invalid interactive markup and can be reparented or
+        // removed when Google hydrates the result.
+        if (location.hostname.includes('google.')) return link;
         return link;
     }
 
     function isCurrentPlacement(wrapper, link, container) {
         const target = findPlacementTarget(link, container);
-        if (target.matches('h1, h2, h3, h4, [role="heading"]')) {
-            return wrapper.parentElement === target;
-        }
         return wrapper.previousElementSibling === target;
     }
 
@@ -412,11 +424,7 @@
         }
 
         const target = findPlacementTarget(link, container);
-        if (target.matches('h1, h2, h3, h4, [role="heading"]')) {
-            target.appendChild(wrapper);
-        } else {
-            target.insertAdjacentElement('afterend', wrapper);
-        }
+        target.insertAdjacentElement('afterend', wrapper);
         rememberControl(wrapper, link, container, signature);
         return wrapper;
     }
@@ -428,7 +436,7 @@
         return links;
     }
 
-    function reconcileContainer(container) {
+    function reconcileContainer(container, peerIndex) {
         if (!isElementNode(container) || !container.isConnected) return;
         knownContainers.add(container);
 
@@ -463,7 +471,7 @@
             );
             const peerTypes = preferred.reference.type
                 ? []
-                : explicitPeerTypes(preferred.link, container);
+                : explicitPeerTypes(preferred.link, container, peerIndex);
             const types = peerTypes.length
                 ? peerTypes
                 : serviceTypes(
@@ -518,7 +526,8 @@
     function processRoots(roots) {
         const containers = new Set();
         for (const root of roots) collectContainers(root, containers);
-        for (const container of containers) reconcileContainer(container);
+        const peerIndex = buildExplicitPeerIndex();
+        for (const container of containers) reconcileContainer(container, peerIndex);
     }
 
     let queuedRoots = new Set();
@@ -571,8 +580,10 @@
         && typeof globalThis.__IMDB_RS_TEST_HOOK__ === 'object') {
         Object.assign(globalThis.__IMDB_RS_TEST_HOOK__, {
             buildLinkSelector,
+            buildExplicitPeerIndex,
             controlSignature,
             extractMediaReference,
+            findPlacementTarget,
             hasMatchingControlMetadata,
             hasTVEvidence,
             isAnchorNode,
@@ -608,11 +619,6 @@
                 queueRoot(mutation.target);
                 continue;
             }
-            if (mutation.type === 'characterData') {
-                queueContainingKnownContainer(mutation.target.parentElement);
-                continue;
-            }
-
             queueContainingKnownContainer(mutation.target);
             // Safari can expose a Google result in separate mutation batches:
             // first the canonical link, then its heading as a sibling. Queueing
@@ -623,9 +629,8 @@
     observer.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ['href'],
-        characterData: true,
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.3.5' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.4.0' });
 })();
