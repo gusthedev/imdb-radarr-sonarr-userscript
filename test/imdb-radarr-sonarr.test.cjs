@@ -201,10 +201,24 @@ test('revisits a child-list mutation target when Google completes a result in st
     assert.equal(roots[1], addedHeading);
 });
 
-test('Google controls are placed after the owning link, not inside its heading', () => {
+test('Google controls escape flipped result headers and their overflow-menu overlay', () => {
     const owner = link('https://www.imdb.com/title/tt1234567/');
-    const container = { querySelector: () => ({ tagName: 'H3' }) };
-    assert.equal(hook.findPlacementTarget(owner, container), owner);
+    owner.querySelector = () => ({ tagName: 'H3' });
+    const safeScope = { parentElement: null };
+    const safeHeaderBlock = { parentElement: safeScope };
+    const flippedResultContent = {
+        parentElement: safeHeaderBlock,
+        style: { transform: 'matrix(1, 0, 0, -1, 0, 0)' }
+    };
+    owner.parentElement = flippedResultContent;
+    assert.equal(hook.findPlacementTarget(owner, flippedResultContent), safeHeaderBlock);
+    assert.equal(hook.controlSearchScope(flippedResultContent), safeScope);
+});
+
+test('Google knowledge-panel controls remain beside non-heading links', () => {
+    const owner = link('https://www.imdb.com/title/tt1234567/');
+    owner.parentElement = { style: { transform: 'none' } };
+    assert.equal(hook.findPlacementTarget(owner, owner.parentElement), owner);
 });
 
 test('builds one explicit title index for TMDB peers', () => {
