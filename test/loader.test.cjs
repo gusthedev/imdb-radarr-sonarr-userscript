@@ -10,11 +10,11 @@ const loaderSource = fs.readFileSync(
 );
 
 const STORAGE = {
-    source: 'imdbRsLoader.sharedCore.source.v1',
-    fallback: 'imdbRsLoader.sharedCore.fallbackSource.v1',
-    etag: 'imdbRsLoader.sharedCore.etag.v1',
-    lastAttempt: 'imdbRsLoader.sharedCore.lastAttempt.v1',
-    rejected: 'imdbRsLoader.sharedCore.rejectedSignature.v1',
+    source: 'imdbRsLoader.sharedCore.source.v2',
+    fallback: 'imdbRsLoader.sharedCore.fallbackSource.v2',
+    etag: 'imdbRsLoader.sharedCore.etag.v2',
+    lastAttempt: 'imdbRsLoader.sharedCore.lastAttempt.v2',
+    rejected: 'imdbRsLoader.sharedCore.rejectedSignature.v2',
     ambiguous: 'imdbRsLoader.ambiguousBehavior.v1'
 };
 
@@ -89,6 +89,21 @@ test('missing core retries immediately despite a recent failed attempt', () => {
     });
     assert.equal(harness.requests.length, 1);
     assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.1']);
+    assert.equal(harness.storage.get(STORAGE.source), next);
+});
+
+test('loader 1.4 migrates past the legacy core cache immediately', () => {
+    const legacy = core('5.4.1');
+    const next = core('5.5.0');
+    const harness = runLoader({
+        storageValues: {
+            'imdbRsLoader.sharedCore.source.v1': legacy,
+            'imdbRsLoader.sharedCore.lastAttempt.v1': Date.now()
+        },
+        response: { status: 200, responseText: next, responseHeaders: 'etag: "550"\r\n' }
+    });
+    assert.equal(harness.requests.length, 1);
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.5.0']);
     assert.equal(harness.storage.get(STORAGE.source), next);
 });
 
