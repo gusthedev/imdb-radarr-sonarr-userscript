@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.3.0
+// @version      1.3.1
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -35,7 +35,6 @@
 
     const SHARED_SCRIPT_URL = 'https://raw.githubusercontent.com/gusthedev/imdb-radarr-sonarr-userscript/main/imdb-radarr-sonarr.user.js';
     const UPDATE_INTERVAL = 60 * 60 * 1000;
-    const EMPTY_CACHE_RETRY_INTERVAL = 5 * 60 * 1000;
     const REQUEST_TIMEOUT = 15_000;
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     const STORAGE = Object.freeze({
@@ -263,8 +262,10 @@
     startCachedCore();
 
     const lastAttempt = Number(GM_getValue(STORAGE.lastAttempt, 0)) || 0;
-    const retryInterval = activeSource ? UPDATE_INTERVAL : EMPTY_CACHE_RETRY_INTERVAL;
-    if (Date.now() - lastAttempt >= retryInterval) {
+    // A recent failed request must never strand a page without a core. When
+    // nothing initialized, recover immediately; only throttle background
+    // update checks while a working core is already active.
+    if (!globalThis[INSTANCE_KEY] || Date.now() - lastAttempt >= UPDATE_INTERVAL) {
         checkForSharedCoreUpdate();
     }
 })();
