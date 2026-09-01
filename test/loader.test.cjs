@@ -58,6 +58,10 @@ function runLoader({ storageValues = {}, response = null, requestFailure = '' } 
     return { alerts, context, menus, requests, storage };
 }
 
+test('loader metadata allows IMDb title pages', () => {
+    assert.doesNotMatch(loaderSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
+});
+
 test('cold install validates, caches, and starts the core', () => {
     const next = core('5.4.0');
     const harness = runLoader({
