@@ -4,11 +4,12 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
+const sharedCoreSource = fs.readFileSync(
+    path.join(__dirname, '..', 'imdb-radarr-sonarr.user.js'),
+    'utf8'
+);
+
 function loadTestHook(documentOverride) {
-    const source = fs.readFileSync(
-        path.join(__dirname, '..', 'imdb-radarr-sonarr.user.js'),
-        'utf8'
-    );
     const hook = {};
     const context = {
         URL,
@@ -27,7 +28,7 @@ function loadTestHook(documentOverride) {
         __IMDB_RS_TEST_HOOK__: hook
     };
     context.globalThis = context;
-    vm.runInNewContext(source, context, { filename: 'imdb-radarr-sonarr.user.js' });
+    vm.runInNewContext(sharedCoreSource, context, { filename: 'imdb-radarr-sonarr.user.js' });
     return hook;
 }
 
@@ -49,6 +50,10 @@ function plain(value) {
 
 const hook = loadTestHook();
 
+test('shared core metadata allows IMDb title pages', () => {
+    assert.doesNotMatch(sharedCoreSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
+});
+
 test('accepts only canonical IMDb title paths', () => {
     assert.deepEqual(
         plain(hook.extractMediaReference(link('https://www.imdb.com/title/tt1234567/?ref_=fn_all_ttl_1'))),
@@ -57,6 +62,46 @@ test('accepts only canonical IMDb title paths', () => {
     assert.equal(hook.extractMediaReference(link('https://www.imdb.com/title/tt1234567/episodes/')), null);
     assert.equal(hook.extractMediaReference(link('https://www.imdb.com/title/tt1234567/fullcredits/')), null);
     assert.equal(hook.extractMediaReference(link('https://www.imdb.com/name/nm1234567/')), null);
+});
+
+test('recognizes official media providers without enabling controls on every listing link', () => {
+    assert.equal(hook.isMediaProviderDomain('www.imdb.com'), true);
+    assert.equal(hook.isMediaProviderDomain('themoviedb.org'), true);
+    assert.equal(hook.isMediaProviderDomain('www.thetvdb.com'), true);
+    assert.equal(hook.isMediaProviderDomain('www.google.com'), false);
+});
+
+test('builds title-page references and classifies IMDb structured data', () => {
+    assert.deepEqual(
+        plain(hook.extractPageReference(
+            'https://www.imdb.com/title/tt0137523/',
+            'Fight Club',
+            ['Movie']
+        )),
+        { source: 'imdb', id: 'tt0137523', type: 'movie', term: 'imdb:tt0137523' }
+    );
+    assert.deepEqual(
+        plain(hook.extractPageReference(
+            'https://www.imdb.com/title/tt0903747/',
+            'Breaking Bad',
+            ['TVSeries']
+        )),
+        { source: 'imdb', id: 'tt0903747', type: 'tv', term: 'imdb:tt0903747' }
+    );
+    assert.deepEqual(
+        plain(hook.extractPageReference('https://www.themoviedb.org/movie/550-fight-club')),
+        { source: 'tmdb', id: '550', type: 'movie', term: 'tmdb:550' }
+    );
+    assert.deepEqual(
+        plain(hook.extractPageReference('https://www.themoviedb.org/tv/1396-breaking-bad')),
+        { source: 'tmdb', id: '1396', type: 'tv', term: 'tmdb:1396' }
+    );
+    assert.deepEqual(
+        plain(hook.extractPageReference('https://thetvdb.com/series/the-lowdown', 'The Lowdown')),
+        { source: 'tvdb', id: 'the-lowdown', type: 'tv', term: 'The Lowdown' }
+    );
+    assert.equal(hook.extractPageReference('https://www.imdb.com/chart/top/'), null);
+    assert.equal(hook.extractPageReference('https://www.themoviedb.org/movie'), null);
 });
 
 test('accepts canonical TMDB movie and TV paths with localized prefixes and same-segment slugs', () => {
