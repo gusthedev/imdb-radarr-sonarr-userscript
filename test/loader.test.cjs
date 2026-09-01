@@ -77,6 +77,17 @@ test('fresh cache starts synchronously without a request', () => {
     assert.equal(harness.requests.length, 0);
 });
 
+test('missing core retries immediately despite a recent failed attempt', () => {
+    const next = core('5.4.1');
+    const harness = runLoader({
+        storageValues: { [STORAGE.lastAttempt]: Date.now() },
+        response: { status: 200, responseText: next, responseHeaders: 'etag: "541"\r\n' }
+    });
+    assert.equal(harness.requests.length, 1);
+    assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.1']);
+    assert.equal(harness.storage.get(STORAGE.source), next);
+});
+
 test('warm update is saved with rollback without double execution', () => {
     const current = core('5.3.5');
     const next = core('5.4.0');
