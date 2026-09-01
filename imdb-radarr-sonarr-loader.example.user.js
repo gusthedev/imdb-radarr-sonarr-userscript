@@ -36,11 +36,11 @@
     const REQUEST_TIMEOUT = 15_000;
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     const STORAGE = Object.freeze({
-        source: 'imdbRsLoader.sharedCore.source.v1',
-        fallbackSource: 'imdbRsLoader.sharedCore.fallbackSource.v1',
-        etag: 'imdbRsLoader.sharedCore.etag.v1',
-        lastAttempt: 'imdbRsLoader.sharedCore.lastAttempt.v1',
-        rejectedSignature: 'imdbRsLoader.sharedCore.rejectedSignature.v1',
+        source: 'imdbRsLoader.sharedCore.source.v2',
+        fallbackSource: 'imdbRsLoader.sharedCore.fallbackSource.v2',
+        etag: 'imdbRsLoader.sharedCore.etag.v2',
+        lastAttempt: 'imdbRsLoader.sharedCore.lastAttempt.v2',
+        rejectedSignature: 'imdbRsLoader.sharedCore.rejectedSignature.v2',
         ambiguousBehavior: AMBIGUOUS_BEHAVIOR_KEY
     });
 
