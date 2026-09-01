@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.4.1
-// @description  Adds Radarr and Sonarr controls beside canonical IMDb, TMDB, and TVDB title links using loader-provided endpoints.
+// @version      5.5.0
+// @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
-// @exclude      *://imdb.com/*
-// @exclude      *://*.imdb.com/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
@@ -83,6 +81,7 @@
 
     const LINK_SELECTOR = buildLinkSelector(pageHostname);
     const CONTROL_SELECTOR = '.mdblist-link-wrap[data-imdb-rs-control="true"]';
+    const PAGE_CONTROL_ID = 'imdb-rs-page-control';
     const TV_PATTERNS = [
         /\btv\s+(?:mini[- ]?series|series|show)\b/i,
         /\bmini[- ]?series\b/i,
@@ -152,6 +151,31 @@
                 opacity: 1 !important;
                 outline: 2px solid #4c9ffe !important;
                 outline-offset: 2px !important;
+            }
+            #${PAGE_CONTROL_ID} {
+                align-items: center !important;
+                background: rgba(20, 20, 20, 0.92) !important;
+                border: 1px solid rgba(255, 255, 255, 0.28) !important;
+                border-radius: 10px !important;
+                box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3) !important;
+                display: flex !important;
+                gap: 7px !important;
+                margin: 0 !important;
+                padding: 8px !important;
+                position: fixed !important;
+                right: 16px !important;
+                top: 12px !important;
+                transform: none !important;
+                z-index: 2147483647 !important;
+            }
+            #${PAGE_CONTROL_ID} .mdblist-btn {
+                background: #fff !important;
+                border-color: #bbb !important;
+                color: #111 !important;
+                font-size: 13px !important;
+                min-height: 32px !important;
+                opacity: 1 !important;
+                padding: 5px 10px !important;
             }
             @media (prefers-color-scheme: dark) {
                 .mdblist-btn {
@@ -247,6 +271,61 @@
         } catch {
             return null;
         }
+    }
+
+    function isMediaProviderDomain(hostname) {
+        return ['imdb.com', 'themoviedb.org', 'thetvdb.com']
+            .some(domain => isDomainOrSubdomain(hostname, domain));
+    }
+
+    function mediaTypeFromStructuredTypes(types) {
+        const normalized = new Set((Array.isArray(types) ? types : [types])
+            .flat(Infinity)
+            .map(value => String(value || '').toLowerCase()));
+        if (['tvseries', 'tvminiseries', 'tvseason', 'tvepisode']
+            .some(type => normalized.has(type))) return 'tv';
+        if (['movie', 'film'].some(type => normalized.has(type))) return 'movie';
+        return null;
+    }
+
+    function structuredDataTypes(root = document) {
+        const types = [];
+        const visit = value => {
+            if (!value || typeof value !== 'object') return;
+            if (Array.isArray(value)) {
+                value.forEach(visit);
+                return;
+            }
+            if (value['@type']) types.push(value['@type']);
+            Object.values(value).forEach(visit);
+        };
+        for (const script of root.querySelectorAll?.('script[type="application/ld+json"]') || []) {
+            try {
+                visit(JSON.parse(script.textContent || ''));
+            } catch {
+                // Ignore unrelated or temporarily incomplete structured data.
+            }
+        }
+        return types.flat(Infinity);
+    }
+
+    function extractPageReference(href, title = '', structuredTypes = []) {
+        const pageLink = {
+            href,
+            dataset: {},
+            innerText: title,
+            textContent: title,
+            querySelector: () => null
+        };
+        const reference = extractMediaReference(pageLink);
+        if (!reference) return null;
+        if (reference.source !== 'imdb') return reference;
+        return { ...reference, type: mediaTypeFromStructuredTypes(structuredTypes) };
+    }
+
+    function currentPageReference() {
+        const title = textWithoutControls(document.querySelector?.('h1')) || document.title || '';
+        return extractPageReference(location.href, title, structuredDataTypes(document));
     }
 
     function hasTVEvidence(text) {
@@ -445,28 +524,55 @@
         wrapper.className = 'mdblist-link-wrap';
         wrapper.dataset.imdbRsControl = 'true';
         wrapper.dataset.mediaKey = referenceKey(reference);
-        for (const type of types) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'mdblist-btn';
-            const service = type === 'tv' ? 'Sonarr' : 'Radarr';
-            const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
-            button.textContent = service;
-            button.title = `Show this title in ${service}`;
-            button.setAttribute('aria-label', button.title);
-            button.addEventListener('click', event => {
-                event.preventDefault();
-                event.stopPropagation();
-                const term = encodeURIComponent(reference.term);
-                window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
-            });
-            wrapper.appendChild(button);
-        }
+        for (const type of types) wrapper.appendChild(createServiceButton(reference, type));
 
         const target = findPlacementTarget(link, container);
         target.insertAdjacentElement('afterend', wrapper);
         rememberControl(wrapper, link, container, signature);
         return wrapper;
+    }
+
+    function createServiceButton(reference, type, pageLevel = false) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mdblist-btn';
+        const service = type === 'tv' ? 'Sonarr' : 'Radarr';
+        const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
+        button.textContent = pageLevel ? `Add to ${service}` : service;
+        button.title = `Show this title in ${service}`;
+        button.setAttribute('aria-label', button.title);
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const term = encodeURIComponent(reference.term);
+            window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
+        });
+        return button;
+    }
+
+    function reconcileProviderPageControl() {
+        if (!isMediaProviderDomain(pageHostname)) return false;
+
+        document.querySelectorAll?.(CONTROL_SELECTOR).forEach(control => control.remove());
+        const reference = currentPageReference();
+        const existing = document.getElementById(PAGE_CONTROL_ID);
+        if (!reference) {
+            existing?.remove();
+            return true;
+        }
+
+        const types = serviceTypes(reference);
+        const signature = controlSignature(referenceKey(reference), reference, types);
+        if (existing?.dataset.signature === signature) return true;
+        existing?.remove();
+
+        const wrapper = document.createElement('aside');
+        wrapper.id = PAGE_CONTROL_ID;
+        wrapper.dataset.signature = signature;
+        wrapper.setAttribute('aria-label', 'Add this title to Radarr or Sonarr');
+        for (const type of types) wrapper.appendChild(createServiceButton(reference, type, true));
+        (document.body || document.documentElement).appendChild(wrapper);
+        return true;
     }
 
     function linksInContainer(container) {
@@ -564,6 +670,9 @@
     }
 
     function processRoots(roots) {
+        // On the official providers, avoid decorating every poster/title link.
+        // Only canonical title pages receive one page-level action group.
+        if (reconcileProviderPageControl()) return;
         const containers = new Set();
         for (const root of roots) collectContainers(root, containers);
         const peerIndex = buildExplicitPeerIndex();
@@ -622,6 +731,7 @@
             buildLinkSelector,
             buildExplicitPeerIndex,
             controlSignature,
+            extractPageReference,
             extractMediaReference,
             findPlacementTarget,
             controlSearchScope,
@@ -631,6 +741,8 @@
             childListRoots,
             isDocumentNode,
             isElementNode,
+            isMediaProviderDomain,
+            mediaTypeFromStructuredTypes,
             normalizeComparableTitle,
             peerTypesForTitle,
             referenceKey,
@@ -673,5 +785,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.4.1' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.5.0' });
 })();
