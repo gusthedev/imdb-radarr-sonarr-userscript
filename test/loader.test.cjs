@@ -178,3 +178,52 @@ test('a silent non-initializing core is rejected', () => {
     assert.deepEqual(Array.from(harness.context.__coreRuns), ['5.4.0']);
     assert.equal(harness.storage.has(STORAGE.source), false);
 });
+
+
+test('a rejected update remains rejected after another page starts the restored core', () => {
+    const broken = core('9.0.0', "throw new Error('broken');");
+    const good = core('8.0.0');
+    const first = runLoader({ storageValues: {
+        [STORAGE.source]: broken, [STORAGE.fallback]: good, [STORAGE.lastAttempt]: Date.now()
+    }});
+    const rejected = first.storage.get(STORAGE.rejected);
+    assert.ok(rejected);
+    const second = runLoader({ storageValues: { ...Object.fromEntries(first.storage), [STORAGE.lastAttempt]: 0 },
+        response: { status: 200, responseText: broken, responseHeaders: '' }
+    });
+    assert.equal(second.storage.get(STORAGE.source), good);
+    assert.equal(second.storage.get(STORAGE.rejected), rejected);
+});
+
+
+test('library requests are read-only, coalesced, sanitized, and cached across page loads', async () => {
+    const config = { [STORAGE.source]: core('8.0.0'), [STORAGE.lastAttempt]: Date.now(),
+        'imdbRs.library.movie.url': 'https://radarr.example.com', 'imdbRs.library.movie.key': 'local-test-key' };
+    const harness = runLoader({ storageValues: config });
+    const first = harness.context.IMDB_RS_CONFIG.readLibrary('movie');
+    const second = harness.context.IMDB_RS_CONFIG.readLibrary('movie');
+    assert.equal(harness.requests.length, 1);
+    assert.equal(first, second);
+    const request = harness.requests[0];
+    assert.equal(request.method, 'GET');
+    assert.equal(request.url, 'https://radarr.example.com/api/v3/movie');
+    assert.equal(request.headers['X-Api-Key'], 'local-test-key');
+    request.onload({ status: 200, responseText: JSON.stringify([{ id: 7, tmdbId: 123, titleSlug: 'film', path: '/private', apiKey: 'secret', hasFile: true }]) });
+    const result = await first;
+    assert.equal(result.rows[0].tmdbId, 123);
+    assert.equal(result.rows[0].path, undefined);
+    assert.equal(result.rows[0].apiKey, undefined);
+    const next = runLoader({ storageValues: Object.fromEntries(harness.storage) });
+    assert.equal((await next.context.IMDB_RS_CONFIG.readLibrary('movie')).state, 'ready');
+    assert.equal(next.requests.length, 0);
+});
+
+test('offline and login HTML responses are unknown, never an empty library', async () => {
+    const harness = runLoader({ storageValues: { [STORAGE.source]: core('8.0.0'), [STORAGE.lastAttempt]: Date.now(),
+        'imdbRs.library.tv.url': 'https://sonarr.example.com', 'imdbRs.library.tv.key': 'local-test-key' } });
+    const read = harness.context.IMDB_RS_CONFIG.readLibrary('tv');
+    harness.requests[0].onload({ status: 200, responseText: '<html>Login required</html>' });
+    assert.equal((await read).state, 'unavailable');
+    assert.equal((await harness.context.IMDB_RS_CONFIG.readLibrary('tv')).state, 'unavailable');
+    assert.equal(harness.requests.length, 1);
+});

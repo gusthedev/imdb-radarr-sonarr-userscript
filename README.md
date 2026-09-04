@@ -22,7 +22,11 @@ The loader runs a validated last-known-good cached core immediately, checks this
 - `ambiguousImdbBehavior`: `both`, `radarr`, or `sonarr`; it can also be cycled from the Tampermonkey menu.
 - `excludedDomains`: optional domains and subdomains on which the core should immediately stop.
 
-No API keys are needed. The script opens the normal Radarr or Sonarr add screen for manual review.
+No API keys are needed for add-screen buttons. Optional library status requires your own API connections: add the API hosts to the private loader's `@connect` entries, then use **Configure library status** in the Tampermonkey menu and reload. Use addresses reachable from the browser's computer. Keep real URLs and keys out of this repository.
+
+Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
+
+Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive.
 
 ## Supported links
 
@@ -36,4 +40,4 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 
 ## Development checks
 
-Run `npm test` with Node.js to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
+Run `npm ci` followed by `npm test` with Node.js 18 or newer to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
