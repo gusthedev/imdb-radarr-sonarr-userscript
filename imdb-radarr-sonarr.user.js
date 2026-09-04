@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.5.0
+// @version      5.6.0
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -288,26 +288,34 @@
         return null;
     }
 
-    function structuredDataTypes(root = document) {
-        const types = [];
-        const visit = value => {
+    function structuredDataTypes(root = document, href = location.href) {
+        const current = extractMediaReference({ href });
+        if (current?.source !== 'imdb') return [];
+        const direct = [], matched = [];
+        const inspect = (value, topLevel = false) => {
             if (!value || typeof value !== 'object') return;
-            if (Array.isArray(value)) {
-                value.forEach(visit);
-                return;
+            if (Array.isArray(value)) { value.forEach(item => inspect(item, topLevel)); return; }
+            const type = mediaTypeFromStructuredTypes(value['@type'] || []);
+            if (type) {
+                const identity = value.url || value['@id'];
+                const ref = typeof identity === 'string'
+                    ? extractMediaReference({ href: new URL(identity, href).href }) : null;
+                if (ref?.source === current.source && ref.id === current.id) matched.push(value['@type']);
+                else if (topLevel && !identity) direct.push(value['@type']);
             }
-            if (value['@type']) types.push(value['@type']);
-            Object.values(value).forEach(visit);
+            // Graph nodes are peers; arbitrary nested recommendations are not.
+            if (value['@graph']) inspect(value['@graph'], true);
+            if (value.mainEntity) inspect(value.mainEntity, true);
         };
         for (const script of root.querySelectorAll?.('script[type="application/ld+json"]') || []) {
-            try {
-                visit(JSON.parse(script.textContent || ''));
-            } catch {
-                // Ignore unrelated or temporarily incomplete structured data.
-            }
+            try { inspect(JSON.parse(script.textContent || ''), true); } catch { /* Incomplete hydration. */ }
         }
-        return types.flat(Infinity);
+        return (matched.length ? matched : direct).flat(Infinity);
     }
+
+    let providerCache = null;
+    let providerDirty = true;
+    function invalidateProvider() { providerDirty = true; }
 
     function extractPageReference(href, title = '', structuredTypes = []) {
         const pageLink = {
@@ -324,8 +332,12 @@
     }
 
     function currentPageReference() {
+        if (!providerDirty && providerCache?.href === location.href) return providerCache.reference;
         const title = textWithoutControls(document.querySelector?.('h1')) || document.title || '';
-        return extractPageReference(location.href, title, structuredDataTypes(document));
+        const reference = extractPageReference(location.href, title, structuredDataTypes(document));
+        providerCache = { href: location.href, reference };
+        providerDirty = false;
+        return reference;
     }
 
     function hasTVEvidence(text) {
@@ -532,28 +544,88 @@
         return wrapper;
     }
 
+    const librarySnapshots = new Map();
+    const libraryInFlight = new Map();
+    const libraryButtons = new Set();
+    function matchLibraryItem(reference, rows) {
+        if (!Array.isArray(rows)) return null;
+        const field = { imdb: 'imdbId', tmdb: 'tmdbId', tvdb: 'tvdbId' }[reference.source];
+        if (!field || (reference.source !== 'imdb' && !/^\d+$/.test(reference.id))) return null;
+        return rows.find(item => String(item[field]) === String(reference.id)) || null;
+    }
+
+    function updateLibraryButton(button) {
+        const { reference, type, service, label, baseUrl } = button._library;
+        const snapshot = librarySnapshots.get(type);
+        const matched = snapshot?.state === 'ready' ? matchLibraryItem(reference, snapshot.rows) : null;
+        button._library.item = matched;
+        const exact = reference.source === 'imdb' || /^\d+$/.test(reference.id);
+        const text = matched ? `✓ In ${service}` : label;
+        if (button.textContent !== text) button.textContent = text;
+        let hint = `Show this title in ${service}`;
+        if (matched) hint = `Already in ${service} · ${matched.monitored ? 'Monitored' : 'Unmonitored'} · ${matched.hasFile ? 'Files available' : 'No files yet'}; open title`;
+        else if (snapshot?.state === 'ready') hint += exact ? ' · Not in library' : ' · Library status needs an exact ID';
+        else if (snapshot?.state === 'unavailable') hint += ' · Library status unavailable';
+        else if (snapshot?.state === 'unconfigured') hint += ' · Configure library status in the Tampermonkey menu';
+        button.title = hint;
+        button.setAttribute('aria-label', hint);
+    }
+
+    function refreshLibraryStatus() {
+        for (const button of libraryButtons) {
+            if (!button.isConnected) { libraryButtons.delete(button); continue; }
+            updateLibraryButton(button);
+        }
+        if (typeof loaderConfig.readLibrary !== 'function') return;
+        const types = new Set([...libraryButtons].map(button => button._library.type));
+        for (const type of types) {
+            if (libraryInFlight.has(type)) continue;
+            const snapshot = librarySnapshots.get(type);
+            const ttl = snapshot?.state === 'ready' ? 5 * 60_000 : 60_000;
+            if (snapshot && Date.now() - snapshot.at < ttl) continue;
+            const request = Promise.resolve().then(() => loaderConfig.readLibrary(type));
+            libraryInFlight.set(type, request);
+            request.then(result => {
+                librarySnapshots.set(type, { ...result, at: Date.now() });
+            }, () => librarySnapshots.set(type, { state: 'unavailable', at: Date.now() })).then(() => {
+                libraryInFlight.delete(type);
+                for (const button of libraryButtons) {
+                    if (!button.isConnected) libraryButtons.delete(button);
+                    else if (button._library.type === type) updateLibraryButton(button);
+                }
+            });
+        }
+    }
+
     function createServiceButton(reference, type, pageLevel = false) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'mdblist-btn';
         const service = type === 'tv' ? 'Sonarr' : 'Radarr';
         const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
-        button.textContent = pageLevel ? `Add to ${service}` : service;
+        const label = pageLevel ? `Add to ${service}` : service;
+        button.textContent = label;
+        button._library = { reference, type, service, label, baseUrl, item: null };
+        libraryButtons.add(button);
         button.title = `Show this title in ${service}`;
         button.setAttribute('aria-label', button.title);
         button.addEventListener('click', event => {
             event.preventDefault();
             event.stopPropagation();
             const term = encodeURIComponent(reference.term);
-            window.open(`${baseUrl}/add/new?term=${term}`, '_blank', 'noopener');
+            const item = button._library.item;
+            const destination = item?.titleSlug
+                ? `${baseUrl}/${type === 'tv' ? 'series' : 'movie'}/${encodeURIComponent(item.titleSlug)}`
+                : `${baseUrl}/add/new?term=${term}`;
+            window.open(destination, '_blank', 'noopener');
         });
+        updateLibraryButton(button);
         return button;
     }
 
     function reconcileProviderPageControl() {
         if (!isMediaProviderDomain(pageHostname)) return false;
 
-        document.querySelectorAll?.(CONTROL_SELECTOR).forEach(control => control.remove());
         const reference = currentPageReference();
         const existing = document.getElementById(PAGE_CONTROL_ID);
         if (!reference) {
@@ -669,14 +741,25 @@
         }
     }
 
+    let peerIndexCache = null;
+    let peerIndexDirty = true;
     function processRoots(roots) {
         // On the official providers, avoid decorating every poster/title link.
         // Only canonical title pages receive one page-level action group.
-        if (reconcileProviderPageControl()) return;
+        if (reconcileProviderPageControl()) { refreshLibraryStatus(); return; }
         const containers = new Set();
         for (const root of roots) collectContainers(root, containers);
-        const peerIndex = buildExplicitPeerIndex();
-        for (const container of containers) reconcileContainer(container, peerIndex);
+        if (!containers.size) return;
+        if (peerIndexDirty || !peerIndexCache) {
+            peerIndexCache = buildExplicitPeerIndex();
+            peerIndexDirty = false;
+            // A new explicit peer can change earlier ambiguous IMDb controls.
+            if (location.hostname.includes('google.') || location.hostname.includes('duckduckgo.com')) {
+                collectContainers(document, containers);
+            }
+        }
+        for (const container of containers) reconcileContainer(container, peerIndexCache);
+        refreshLibraryStatus();
     }
 
     let queuedRoots = new Set();
@@ -724,10 +807,61 @@
         return roots;
     }
 
+    function isOwnedNode(node) {
+        const element = isElementNode(node) ? node : node?.parentElement;
+        return Boolean(element?.closest?.(`${CONTROL_SELECTOR}, #${PAGE_CONTROL_ID}, #mdblist-userscript-styles`));
+    }
+
+    const PROVIDER_METADATA = 'h1, title, script[type="application/ld+json"]';
+    function touchesSelector(node, selector) {
+        const element = isElementNode(node) ? node : node?.parentElement;
+        return Boolean(element?.matches?.(selector) || element?.querySelector?.(selector));
+    }
+
+    function handleMutations(mutations) {
+        const provider = isMediaProviderDomain(pageHostname);
+        for (const mutation of mutations) {
+            if (isOwnedNode(mutation.target)) continue;
+            const changed = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
+            if (mutation.type === 'childList' && changed.length && changed.every(isOwnedNode)) continue;
+            if (provider) {
+                const target = isElementNode(mutation.target) ? mutation.target : mutation.target?.parentElement;
+                if (location.href !== providerCache?.href || target?.closest?.(PROVIDER_METADATA)
+                    || changed.some(node => touchesSelector(node, PROVIDER_METADATA))) {
+                    invalidateProvider();
+                    queueRoot(document);
+                }
+                continue;
+            }
+            const target = isElementNode(mutation.target) ? mutation.target : mutation.target?.parentElement;
+            if (mutation.type === 'attributes' && mutation.attributeName === 'href') {
+                // Include previously enhanced containers when a media link changes to a non-media URL.
+                if (target?.matches?.(LINK_SELECTOR)) { peerIndexDirty = true; queueRoot(target); }
+                queueContainingKnownContainer(target);
+                if (target?.parentElement) queueContainingKnownContainer(target.parentElement);
+                peerIndexDirty = true;
+                continue;
+            }
+            if (target?.closest?.('h1, h2, h3, h4, [role="heading"]')
+                || changed.some(node => touchesSelector(node, LINK_SELECTOR + ', h1, h2, h3, h4, [role="heading"]'))) {
+                peerIndexDirty = true;
+                for (const root of childListRoots(mutation)) queueRoot(root);
+                if (target) queueRoot(target);
+            }
+            queueContainingKnownContainer(target);
+        }
+    }
+
     if (loaderConfig.testMode === true
         && globalThis.__IMDB_RS_TEST_HOOK__
         && typeof globalThis.__IMDB_RS_TEST_HOOK__ === 'object') {
         Object.assign(globalThis.__IMDB_RS_TEST_HOOK__, {
+            structuredDataTypes,
+            currentPageReference,
+            invalidateProvider,
+            handleMutations,
+            isOwnedNode,
+            matchLibraryItem,
             buildLinkSelector,
             buildExplicitPeerIndex,
             controlSignature,
@@ -758,7 +892,29 @@
     // a mutation that contains the final canonical link. A few bounded rescans
     // cover that startup window, and returning to the tab provides a cheap
     // recovery point without running a permanent polling loop.
-    const reconcilePage = () => queueRoot(document);
+    const reconcilePage = () => {
+        // Focus refreshes library status; only initial hydration/navigation invalidate page data.
+        queueRoot(document);
+    };
+    const navigate = () => {
+        invalidateProvider();
+        peerIndexDirty = true;
+        queueRoot(document);
+    };
+    globalThis.addEventListener?.('popstate', navigate);
+    globalThis.addEventListener?.('hashchange', navigate);
+    for (const name of ['pushState', 'replaceState']) {
+        const original = globalThis.history?.[name];
+        if (typeof original !== 'function') continue;
+        try {
+            globalThis.history[name] = function (...args) {
+                const before = location.href;
+                const result = Reflect.apply(original, this, args);
+                if (location.href !== before) navigate();
+                return result;
+            };
+        } catch { /* Provider metadata mutations also cover navigation. */ }
+    }
     for (const delay of [250, 1_000, 3_000]) setTimeout(reconcilePage, delay);
     globalThis.addEventListener?.('pageshow', reconcilePage);
     globalThis.addEventListener?.('focus', reconcilePage);
@@ -766,24 +922,13 @@
         if (!document.hidden) reconcilePage();
     });
 
-    const observer = new MutationObserver(mutations => {
-        for (const mutation of mutations) {
-            if (mutation.type === 'attributes') {
-                queueRoot(mutation.target);
-                continue;
-            }
-            queueContainingKnownContainer(mutation.target);
-            // Safari can expose a Google result in separate mutation batches:
-            // first the canonical link, then its heading as a sibling. Queueing
-            // the mutation target revisits that now-complete result subtree.
-            for (const root of childListRoots(mutation)) queueRoot(root);
-        }
-    });
+    const observer = new MutationObserver(handleMutations);
     observer.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ['href'],
+        attributeFilter: ['href', 'type'],
+        characterData: true,
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.5.0' });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.0', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

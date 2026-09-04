@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.4.0
+// @version      1.5.0
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -13,6 +13,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @connect      raw.githubusercontent.com
+// @connect      sonarr.example.com
+// @connect      radarr.example.com
 // @noframes
 // ==/UserScript==
 
@@ -21,6 +23,68 @@
 
     const AMBIGUOUS_BEHAVIOR_KEY = 'imdbRsLoader.ambiguousBehavior.v1';
     const storedAmbiguousBehavior = GM_getValue(AMBIGUOUS_BEHAVIOR_KEY, 'both');
+    // These remain private in Tampermonkey storage. Add the chosen hosts to @connect.
+    const LIBRARY_CONNECTIONS = {
+        movie: { baseUrl: GM_getValue('imdbRs.library.movie.url', ''), apiKey: GM_getValue('imdbRs.library.movie.key', '') },
+        tv: { baseUrl: GM_getValue('imdbRs.library.tv.url', ''), apiKey: GM_getValue('imdbRs.library.tv.key', '') }
+    };
+    const libraryRequests = new Map();
+    const libraryFailures = new Map();
+    const LIBRARY_TTL = 5 * 60 * 1000;
+
+    function readLibrary(type, force = false) {
+        const connection = LIBRARY_CONNECTIONS[type];
+        if (!connection?.baseUrl || !connection.apiKey) return Promise.resolve({ state: 'unconfigured' });
+        if (libraryRequests.has(type)) return libraryRequests.get(type);
+        const cacheKey = `imdbRs.library.${type}.cache.v1`;
+        const cached = GM_getValue(cacheKey, null);
+        if (!force && cached?.baseUrl === connection.baseUrl && Array.isArray(cached.rows)
+            && Date.now() - cached.at >= 0 && Date.now() - cached.at < LIBRARY_TTL) {
+            return Promise.resolve({ state: 'ready', rows: cached.rows });
+        }
+        if (!force && Date.now() - (libraryFailures.get(type) || 0) < 60_000) {
+            return Promise.resolve({ state: 'unavailable' });
+        }
+        const request = new Promise(resolve => {
+            const fail = () => {
+                libraryFailures.set(type, Date.now());
+                resolve({ state: 'unavailable' });
+            };
+            try {
+                const base = new URL(connection.baseUrl);
+                if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
+                    fail(); return;
+                }
+                const url = base.href.replace(/\/$/, '') + '/api/v3/' + (type === 'tv' ? 'series' : 'movie');
+                GM_xmlhttpRequest({
+                    method: 'GET', url, timeout: 10_000,
+                    headers: { 'X-Api-Key': connection.apiKey, Accept: 'application/json' },
+                    onload(response) {
+                        try {
+                            if (response.status !== 200) { fail(); return; }
+                            const data = JSON.parse(response.responseText);
+                            if (!Array.isArray(data) || data.some(item => !item || !Number.isInteger(item.id) || item.id <= 0)) { fail(); return; }
+                            // Never persist paths, artwork, or API credentials in the library cache.
+                            const rows = data.map(item => ({
+                                id: item.id, imdbId: item.imdbId || '', tmdbId: item.tmdbId || 0,
+                                tvdbId: item.tvdbId || 0, titleSlug: item.titleSlug || '',
+                                monitored: item.monitored === true,
+                                hasFile: type === 'movie' ? item.hasFile === true : (item.statistics?.episodeFileCount || 0) > 0
+                            }));
+                            GM_setValue(cacheKey, { baseUrl: connection.baseUrl, at: Date.now(), rows });
+                            libraryFailures.delete(type);
+                            resolve({ state: 'ready', rows });
+                        } catch { fail(); }
+                    },
+                    onerror: fail, ontimeout: fail, onabort: fail
+                });
+            } catch { fail(); }
+        });
+        libraryRequests.set(type, request);
+        request.then(() => libraryRequests.delete(type));
+        return request;
+    }
+
     // Keep your real service URLs in your locally installed copy of this loader.
     globalThis.IMDB_RS_CONFIG = Object.freeze({
         sonarrBaseUrl: 'https://sonarr.example.com',
@@ -28,7 +92,8 @@
         ambiguousImdbBehavior: ['both', 'radarr', 'sonarr'].includes(storedAmbiguousBehavior)
             ? storedAmbiguousBehavior
             : 'both',
-        excludedDomains: ['example.com']
+        excludedDomains: ['example.com'],
+        readLibrary
     });
 
     const SHARED_SCRIPT_URL = 'https://raw.githubusercontent.com/gusthedev/imdb-radarr-sonarr-userscript/main/imdb-radarr-sonarr.user.js';
@@ -104,7 +169,10 @@
             eval(`${source}\n//# sourceURL=imdb-radarr-sonarr.user.js`);
             if (!globalThis[INSTANCE_KEY]) throw new Error('The shared core returned without initializing.');
             activeSource = source;
-            if (clearRejected) GM_deleteValue(STORAGE.rejectedSignature);
+            // Starting an older working version must not pardon a rejected update.
+            if (clearRejected && GM_getValue(STORAGE.rejectedSignature, '') === sourceSignature(source)) {
+                GM_deleteValue(STORAGE.rejectedSignature);
+            }
             return true;
         } catch (error) {
             GM_setValue(STORAGE.rejectedSignature, sourceSignature(source));
@@ -255,6 +323,32 @@
         const next = values[(values.indexOf(current) + 1) % values.length];
         GM_setValue(STORAGE.ambiguousBehavior, next);
         notifyManual(`Ambiguous IMDb results will use ${next}. Reload the page to apply it.`);
+    });
+
+    GM_registerMenuCommand('Configure library status', () => {
+        for (const [type, name] of [['movie', 'Radarr'], ['tv', 'Sonarr']]) {
+            const current = LIBRARY_CONNECTIONS[type];
+            const baseUrl = window.prompt(`${name} API base URL (blank disables status; its host must be in @connect):`, current.baseUrl);
+            if (baseUrl === null) return;
+            if (baseUrl.trim()) {
+                try {
+                    const parsed = new URL(baseUrl.trim());
+                    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+                } catch { notifyManual('Use an HTTP(S) base URL without credentials, query, or fragment.'); return; }
+            }
+            const key = baseUrl.trim() ? window.prompt(`${name} API key (stored only in Tampermonkey):`, '') : '';
+            if (key === null) return;
+            GM_setValue(`imdbRs.library.${type}.url`, baseUrl.trim().replace(/\/$/, ''));
+            GM_setValue(`imdbRs.library.${type}.key`, key.trim());
+            GM_deleteValue(`imdbRs.library.${type}.cache.v1`);
+        }
+        notifyManual('Library-status settings saved. Reload the page to apply them.');
+    });
+
+    GM_registerMenuCommand('Refresh library status', () => {
+        for (const type of ['movie', 'tv']) GM_deleteValue(`imdbRs.library.${type}.cache.v1`);
+        libraryFailures.clear();
+        globalThis[INSTANCE_KEY]?.refreshLibraryStatus?.();
     });
 
     startCachedCore();
