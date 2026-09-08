@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.4
+// @version      5.6.5
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -116,8 +116,6 @@
             .mdblist-link-wrap {
                 display: inline-flex !important;
                 position: relative !important;
-                z-index: 2147483647 !important;
-                isolation: isolate !important;
                 align-items: center !important;
                 gap: 3px !important;
                 margin-inline-start: 5px !important;
@@ -143,9 +141,6 @@
                 text-decoration: none !important;
                 white-space: nowrap !important;
                 cursor: pointer !important;
-                pointer-events: auto !important;
-                position: relative !important;
-                z-index: 1 !important;
                 opacity: 0.82 !important;
                 direction: ltr !important;
                 transform: none !important;
@@ -728,7 +723,16 @@
         // Treat matching controls as shared DOM state, not as private state owned by
         // this particular evaluation. This lets a second loader/core evaluation
         // adopt the existing control instead of creating an identical neighbor.
-        const managedControls = Array.from(controlSearchScope(container).querySelectorAll(CONTROL_SELECTOR));
+        // A transformed Google header can force controls outside the result
+        // container, so controlSearchScope may cover several neighboring cards.
+        // Keep each control owned by the container that created it; otherwise
+        // duplicate links for the same title repeatedly steal and relocate one
+        // another's button as Google updates or hovers those cards.
+        const managedControls = Array.from(controlSearchScope(container).querySelectorAll(CONTROL_SELECTOR))
+            .filter(wrapper => {
+                const state = controlState.get(wrapper);
+                return state ? state.container === container : container.contains(wrapper);
+            });
         const controlsByKey = new Map();
         for (const wrapper of managedControls) {
             const key = wrapper.dataset.mediaKey || '';
@@ -988,5 +992,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.4', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.5', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

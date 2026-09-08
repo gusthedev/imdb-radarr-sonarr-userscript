@@ -61,6 +61,16 @@ test('Google hover siblings do not replace an existing control', async t => {
     assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
 });
 
+test('duplicate Google cards retain separate controls outside flipped headers', async t => {
+    const card = id => `<section id="${id}"><div style="transform: scaleY(-1)"><a href="https://imdb.com/title/tt123"><h3>Film</h3></a></div></section>`;
+    const h = setup(t, card('first') + card('second'), 'https://www.google.com/search?q=film');
+    await h.settle();
+    const controls = h.w.document.querySelectorAll('.mdblist-link-wrap');
+    assert.equal(controls.length, 2);
+    assert.equal(controls[0].previousElementSibling.id, 'first');
+    assert.equal(controls[1].previousElementSibling.id, 'second');
+});
+
 test('provider metadata is cached, ignores nested recommendations, and follows navigation', async t => {
     const h = setup(t, '<h1>Film</h1><script type="application/ld+json">{"@type":"Movie","url":"https://www.imdb.com/title/tt123/","subjectOf":{"@type":"TVSeries"}}</script><div id="clock">0</div>', 'https://www.imdb.com/title/tt123/');
     await h.settle();
