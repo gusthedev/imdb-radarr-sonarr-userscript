@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.5.0
+// @version      1.5.1
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -96,7 +96,9 @@
         readLibrary
     });
 
-    const SHARED_SCRIPT_URL = 'https://raw.githubusercontent.com/gusthedev/imdb-radarr-sonarr-userscript/main/imdb-radarr-sonarr.user.js';
+    // Use GitHub's canonical full ref path. The shorthand /main/ raw URL can
+    // briefly keep serving an older edge-cached revision after a new push.
+    const SHARED_SCRIPT_URL = 'https://raw.githubusercontent.com/gusthedev/imdb-radarr-sonarr-userscript/refs/heads/main/imdb-radarr-sonarr.user.js';
     const UPDATE_INTERVAL = 60 * 60 * 1000;
     const REQUEST_TIMEOUT = 15_000;
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');

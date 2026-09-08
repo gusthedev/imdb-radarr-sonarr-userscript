@@ -62,6 +62,11 @@ test('loader metadata allows IMDb title pages', () => {
     assert.doesNotMatch(loaderSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
 });
 
+test('loader fetches the canonical branch ref instead of the stale-prone shorthand URL', () => {
+    assert.match(loaderSource, /raw\.githubusercontent\.com\/gusthedev\/imdb-radarr-sonarr-userscript\/refs\/heads\/main\/imdb-radarr-sonarr\.user\.js/);
+    assert.doesNotMatch(loaderSource, /imdb-radarr-sonarr-userscript\/main\/imdb-radarr-sonarr\.user\.js/);
+});
+
 test('cold install validates, caches, and starts the core', () => {
     const next = core('5.4.0');
     const harness = runLoader({
