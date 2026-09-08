@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.3
+// @version      5.6.4
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -490,7 +490,14 @@
 
     function isCurrentPlacement(wrapper, link, container) {
         const target = findPlacementTarget(link, container);
-        return wrapper.previousElementSibling === target;
+        if (wrapper.previousElementSibling === target) return true;
+        // Google inserts temporary hover/menu siblings between a result link
+        // and our control. Treat the placement as stable while both remain in
+        // order under the same parent; otherwise every hover removes and then
+        // recreates the button.
+        return location.hostname.includes('google.')
+            && wrapper.parentElement === target.parentElement
+            && Boolean(target.compareDocumentPosition?.(wrapper) & 4);
     }
 
     function rememberControl(wrapper, link, container, signature) {
@@ -981,5 +988,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.3', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.4', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

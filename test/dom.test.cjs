@@ -50,6 +50,17 @@ test('new explicit peers reclassify existing ambiguous results', async t => {
     assert.equal(h.w.document.querySelector('article button').textContent, 'Radarr');
 });
 
+test('Google hover siblings do not replace an existing control', async t => {
+    const h = setup(t, '<article><a href="https://imdb.com/title/tt123"><h3>Film</h3></a></article>', 'https://www.google.com/search?q=film');
+    await h.settle();
+    const link = h.w.document.querySelector('article a');
+    const original = h.w.document.querySelector('.mdblist-link-wrap');
+    link.insertAdjacentHTML('afterend', '<span class="google-hover-layer"></span>');
+    await h.settle();
+    assert.equal(h.w.document.querySelector('.mdblist-link-wrap'), original);
+    assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
+});
+
 test('provider metadata is cached, ignores nested recommendations, and follows navigation', async t => {
     const h = setup(t, '<h1>Film</h1><script type="application/ld+json">{"@type":"Movie","url":"https://www.imdb.com/title/tt123/","subjectOf":{"@type":"TVSeries"}}</script><div id="clock">0</div>', 'https://www.imdb.com/title/tt123/');
     await h.settle();
