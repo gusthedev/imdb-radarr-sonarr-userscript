@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.0
+// @version      5.6.1
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -151,31 +151,6 @@
                 opacity: 1 !important;
                 outline: 2px solid #4c9ffe !important;
                 outline-offset: 2px !important;
-            }
-            #${PAGE_CONTROL_ID} {
-                align-items: center !important;
-                background: rgba(20, 20, 20, 0.92) !important;
-                border: 1px solid rgba(255, 255, 255, 0.28) !important;
-                border-radius: 10px !important;
-                box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3) !important;
-                display: flex !important;
-                gap: 7px !important;
-                margin: 0 !important;
-                padding: 8px !important;
-                position: fixed !important;
-                right: 16px !important;
-                top: 12px !important;
-                transform: none !important;
-                z-index: 2147483647 !important;
-            }
-            #${PAGE_CONTROL_ID} .mdblist-btn {
-                background: #fff !important;
-                border-color: #bbb !important;
-                color: #111 !important;
-                font-size: 13px !important;
-                min-height: 32px !important;
-                opacity: 1 !important;
-                padding: 5px 10px !important;
             }
             @media (prefers-color-scheme: dark) {
                 .mdblist-btn {
@@ -623,6 +598,76 @@
         return button;
     }
 
+    function createProviderPageControl(reference, types, signature) {
+        const host = document.createElement('div');
+        host.id = PAGE_CONTROL_ID;
+        host.dataset.signature = signature;
+        host.setAttribute('aria-label', 'Add this title to Radarr or Sonarr');
+        // Inline-important host geometry and a shadow root keep provider CSS
+        // and hover rules from hiding or restyling this floating control.
+        const hostStyles = {
+            all: 'initial',
+            display: 'block',
+            position: 'fixed',
+            right: '16px',
+            top: '12px',
+            margin: '0',
+            padding: '0',
+            visibility: 'visible',
+            opacity: '1',
+            transform: 'none',
+            pointerEvents: 'auto',
+            zIndex: '2147483647'
+        };
+        for (const [property, value] of Object.entries(hostStyles)) {
+            host.style.setProperty(property.replace(/[A-Z]/g, match => `-${match.toLowerCase()}`), value, 'important');
+        }
+
+        const shadow = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = `
+            :host { color-scheme: light; }
+            .control {
+                align-items: center;
+                background: rgba(20, 20, 20, 0.92);
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                border-radius: 10px;
+                box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+                box-sizing: border-box;
+                display: flex;
+                gap: 7px;
+                padding: 8px;
+            }
+            button {
+                align-items: center;
+                appearance: none;
+                background: #fff;
+                border: 1px solid #bbb;
+                border-radius: 5px;
+                box-sizing: border-box;
+                color: #111;
+                cursor: pointer;
+                display: inline-flex;
+                font: 600 13px/1.2 system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+                justify-content: center;
+                min-height: 32px;
+                opacity: 1;
+                padding: 5px 10px;
+                transform: none;
+                visibility: visible;
+                white-space: nowrap;
+            }
+            button:hover { background: #eee; filter: none; opacity: 1; visibility: visible; }
+            button:focus-visible { outline: 2px solid #4c9ffe; outline-offset: 2px; }
+        `;
+        const control = document.createElement('div');
+        control.className = 'control';
+        for (const type of types) control.appendChild(createServiceButton(reference, type, true));
+        shadow.append(style, control);
+        document.documentElement.appendChild(host);
+        return host;
+    }
+
     function reconcileProviderPageControl() {
         if (!isMediaProviderDomain(pageHostname)) return false;
 
@@ -638,12 +683,7 @@
         if (existing?.dataset.signature === signature) return true;
         existing?.remove();
 
-        const wrapper = document.createElement('aside');
-        wrapper.id = PAGE_CONTROL_ID;
-        wrapper.dataset.signature = signature;
-        wrapper.setAttribute('aria-label', 'Add this title to Radarr or Sonarr');
-        for (const type of types) wrapper.appendChild(createServiceButton(reference, type, true));
-        (document.body || document.documentElement).appendChild(wrapper);
+        createProviderPageControl(reference, types, signature);
         return true;
     }
 
@@ -862,6 +902,7 @@
             handleMutations,
             isOwnedNode,
             matchLibraryItem,
+            createProviderPageControl,
             buildLinkSelector,
             buildExplicitPeerIndex,
             controlSignature,
@@ -930,5 +971,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.0', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.1', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

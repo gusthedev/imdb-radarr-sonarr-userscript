@@ -54,6 +54,12 @@ test('shared core metadata allows IMDb title pages', () => {
     assert.doesNotMatch(sharedCoreSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
 });
 
+test('provider page control is isolated from host hover styles', () => {
+    assert.match(sharedCoreSource, /attachShadow\(\{ mode: 'open' \}\)/);
+    assert.match(sharedCoreSource, /document\.documentElement\.appendChild\(host\)/);
+    assert.match(sharedCoreSource, /button:hover \{ background: #eee; filter: none; opacity: 1; visibility: visible; \}/);
+});
+
 test('accepts only canonical IMDb title paths', () => {
     assert.deepEqual(
         plain(hook.extractMediaReference(link('https://www.imdb.com/title/tt1234567/?ref_=fn_all_ttl_1'))),

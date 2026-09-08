@@ -26,6 +26,10 @@ function setup(t, html, url, extra = {}) {
     } };
 }
 
+function providerButton(document) {
+    return document.getElementById('imdb-rs-page-control')?.shadowRoot?.querySelector('button');
+}
+
 test('irrelevant mutations and script-owned button text cause no document rescans', async t => {
     const h = setup(t, '<article><a href="https://imdb.com/title/tt123"><h3>Film</h3></a></article><div id="clock">0</div>', 'https://www.google.com/search?q=film');
     await h.settle();
@@ -49,7 +53,7 @@ test('new explicit peers reclassify existing ambiguous results', async t => {
 test('provider metadata is cached, ignores nested recommendations, and follows navigation', async t => {
     const h = setup(t, '<h1>Film</h1><script type="application/ld+json">{"@type":"Movie","url":"https://www.imdb.com/title/tt123/","subjectOf":{"@type":"TVSeries"}}</script><div id="clock">0</div>', 'https://www.imdb.com/title/tt123/');
     await h.settle();
-    assert.equal(h.w.document.querySelector('#imdb-rs-page-control').textContent, 'Add to Radarr');
+    assert.equal(providerButton(h.w.document).textContent, 'Add to Radarr');
     const before = h.scans();
     h.w.document.getElementById('clock').firstChild.data = '1';
     await h.settle();
@@ -57,7 +61,7 @@ test('provider metadata is cached, ignores nested recommendations, and follows n
     h.w.history.pushState({}, '', '/title/tt456/');
     h.w.document.querySelector('script').textContent = '{"@type":"TVSeries","url":"https://www.imdb.com/title/tt456/"}';
     await h.settle();
-    assert.equal(h.w.document.querySelector('#imdb-rs-page-control').textContent, 'Add to Sonarr');
+    assert.equal(providerButton(h.w.document).textContent, 'Add to Sonarr');
 });
 
 test('library matches exact IDs and opens the existing title instead of the add screen', async t => {
@@ -67,7 +71,7 @@ test('library matches exact IDs and opens the existing title instead of the add 
     });
     h.w.open = url => { opened = url; };
     await h.settle();
-    const button = h.w.document.querySelector('#imdb-rs-page-control button');
+    const button = providerButton(h.w.document);
     assert.equal(button.textContent, '✓ In Radarr');
     assert.match(button.title, /Files available/);
     button.click();
