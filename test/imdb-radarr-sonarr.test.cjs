@@ -60,6 +60,12 @@ test('provider page control is isolated from host hover styles', () => {
     assert.match(sharedCoreSource, /button:hover \{ background: #eee; filter: none; opacity: 1; visibility: visible; \}/);
 });
 
+test('search-result hover avoids Safari filter compositing', () => {
+    assert.doesNotMatch(sharedCoreSource, /\.mdblist-btn:hover[^}]*brightness/s);
+    assert.match(sharedCoreSource, /\.mdblist-btn:hover[^}]*-webkit-filter: none !important/s);
+    assert.match(sharedCoreSource, /\.mdblist-btn:hover[^}]*visibility: visible !important/s);
+});
+
 test('accepts only canonical IMDb title paths', () => {
     assert.deepEqual(
         plain(hook.extractMediaReference(link('https://www.imdb.com/title/tt1234567/?ref_=fn_all_ttl_1'))),
