@@ -62,9 +62,10 @@ test('loader metadata allows IMDb title pages', () => {
     assert.doesNotMatch(loaderSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
 });
 
-test('loader fetches the canonical branch ref instead of the stale-prone shorthand URL', () => {
-    assert.match(loaderSource, /raw\.githubusercontent\.com\/gusthedev\/imdb-radarr-sonarr-userscript\/refs\/heads\/main\/imdb-radarr-sonarr\.user\.js/);
-    assert.doesNotMatch(loaderSource, /imdb-radarr-sonarr-userscript\/main\/imdb-radarr-sonarr\.user\.js/);
+test('loader fetches the current branch through GitHub API raw media', () => {
+    assert.match(loaderSource, /api\.github\.com\/repos\/gusthedev\/imdb-radarr-sonarr-userscript\/contents\/imdb-radarr-sonarr\.user\.js\?ref=main/);
+    assert.match(loaderSource, /Accept: 'application\/vnd\.github\.raw\+json'/);
+    assert.doesNotMatch(loaderSource, /const SHARED_SCRIPT_URL = 'https:\/\/raw\.githubusercontent\.com/);
 });
 
 test('cold install validates, caches, and starts the core', () => {
@@ -147,7 +148,7 @@ test('manual update bypasses caches and status reports all slots', () => {
     });
     harness.menus.get('Check for shared-core updates now')();
     const request = harness.requests.at(-1);
-    assert.match(request.url, /\?tm_refresh=\d+$/);
+    assert.match(request.url, /[?&]tm_refresh=\d+$/);
     assert.equal(request.headers['Cache-Control'], 'no-cache');
     request.onload({ status: 304, responseHeaders: '' });
     harness.menus.get('Show shared-core status')();

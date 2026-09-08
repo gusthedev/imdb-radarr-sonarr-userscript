@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.5.1
+// @version      1.5.2
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -12,7 +12,7 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
-// @connect      raw.githubusercontent.com
+// @connect      api.github.com
 // @connect      sonarr.example.com
 // @connect      radarr.example.com
 // @noframes
@@ -96,9 +96,10 @@
         readLibrary
     });
 
-    // Use GitHub's canonical full ref path. The shorthand /main/ raw URL can
-    // briefly keep serving an older edge-cached revision after a new push.
-    const SHARED_SCRIPT_URL = 'https://raw.githubusercontent.com/gusthedev/imdb-radarr-sonarr-userscript/refs/heads/main/imdb-radarr-sonarr.user.js';
+    // The raw.githubusercontent.com edge can serve an older branch revision for
+    // several minutes. GitHub's contents API with the raw media type resolves
+    // the current branch ref directly.
+    const SHARED_SCRIPT_URL = 'https://api.github.com/repos/gusthedev/imdb-radarr-sonarr-userscript/contents/imdb-radarr-sonarr.user.js?ref=main';
     const UPDATE_INTERVAL = 60 * 60 * 1000;
     const REQUEST_TIMEOUT = 15_000;
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
@@ -226,7 +227,11 @@
         const { primary, fallback } = readCachedSources();
         const previousSource = primary || fallback;
         const etag = primary ? GM_getValue(STORAGE.etag, '') : '';
-        const headers = etag ? { 'If-None-Match': etag } : {};
+        const headers = {
+            Accept: 'application/vnd.github.raw+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(etag ? { 'If-None-Match': etag } : {})
+        };
         if (manual) {
             headers['Cache-Control'] = 'no-cache';
             headers.Pragma = 'no-cache';
@@ -241,7 +246,7 @@
 
         GM_xmlhttpRequest({
             method: 'GET',
-            url: manual ? `${SHARED_SCRIPT_URL}?tm_refresh=${Date.now()}` : SHARED_SCRIPT_URL,
+            url: manual ? `${SHARED_SCRIPT_URL}&tm_refresh=${Date.now()}` : SHARED_SCRIPT_URL,
             headers,
             timeout: REQUEST_TIMEOUT,
             onload(response) {
