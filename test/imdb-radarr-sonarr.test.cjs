@@ -62,8 +62,11 @@ test('provider page control is isolated from host hover styles', () => {
 
 test('search-result hover avoids Safari filter compositing', () => {
     assert.doesNotMatch(sharedCoreSource, /\.mdblist-btn:hover[^}]*brightness/s);
+    assert.doesNotMatch(sharedCoreSource, /\.mdblist-btn:hover[^}]*box-shadow/s);
     assert.match(sharedCoreSource, /\.mdblist-btn:hover[^}]*-webkit-filter: none !important/s);
     assert.match(sharedCoreSource, /\.mdblist-btn:hover[^}]*visibility: visible !important/s);
+    assert.match(sharedCoreSource, /\.mdblist-link-wrap[^}]*z-index: 2147483647 !important/s);
+    assert.match(sharedCoreSource, /\.mdblist-link-wrap[^}]*isolation: isolate !important/s);
 });
 
 test('accepts only canonical IMDb title paths', () => {
