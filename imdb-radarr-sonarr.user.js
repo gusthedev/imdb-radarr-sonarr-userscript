@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.6
+// @version      5.6.7
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
+// @exclude      *://x.com/*
+// @exclude      *://*.x.com/*
+// @exclude      *://twitter.com/*
+// @exclude      *://*.twitter.com/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
@@ -16,6 +20,14 @@
 
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     if (globalThis[INSTANCE_KEY]) return;
+
+    // Existing loaders evaluate this core directly, bypassing @exclude metadata.
+    // Mark an intentional no-op as initialized so they never restore an older,
+    // active core on these sites. Do not touch the DOM or navigation APIs.
+    if (['x.com', 'twitter.com'].some(domain => isDomainOrSubdomain(location.hostname, domain))) {
+        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.7', disabled: true });
+        return;
+    }
 
     const loaderConfig = typeof globalThis.IMDB_RS_CONFIG === 'object' && globalThis.IMDB_RS_CONFIG
         ? globalThis.IMDB_RS_CONFIG
@@ -1008,5 +1020,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.6', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.7', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

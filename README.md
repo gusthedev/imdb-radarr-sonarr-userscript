@@ -2,6 +2,8 @@
 
 This repository contains the shared, endpoint-free core for a Tampermonkey userscript that adds Radarr and Sonarr buttons beside canonical IMDb, TMDB, and TVDB title links.
 
+X and Twitter (including subdomains) are excluded to avoid interfering with replies and navigation in Safari. This protection also applies when an older loader evaluates the current shared core; update the core and reload any open X tabs to activate it.
+
 ## Privacy model
 
 The public core contains no Radarr or Sonarr hostname, credential, token, or API key. Private service URLs stay in a small loader installed locally in Tampermonkey.

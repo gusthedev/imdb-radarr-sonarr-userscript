@@ -30,6 +30,39 @@ function providerButton(document) {
     return document.getElementById('imdb-rs-page-control')?.shadowRoot?.querySelector('button');
 }
 
+test('core evaluated by an existing loader does nothing on X or Twitter', t => {
+    for (const hostname of ['x.com', 'www.x.com', 'twitter.com', 'mobile.twitter.com']) {
+        const dom = new JSDOM('<article><a href="https://imdb.com/title/tt123">Film</a></article>', {
+            url: `https://${hostname}/example/status/123`, runScripts: 'outside-only'
+        });
+        t.after(() => dom.window.close());
+        const w = dom.window;
+        const before = w.document.documentElement.outerHTML;
+        const pushState = w.history.pushState, replaceState = w.history.replaceState;
+        const unexpected = () => assert.fail('Excluded sites must not initialize page work');
+        w.MutationObserver = unexpected;
+        w.setTimeout = unexpected;
+        w.requestAnimationFrame = unexpected;
+        w.addEventListener = unexpected;
+        w.IMDB_RS_CONFIG = { readLibrary: unexpected };
+        w.eval(source);
+        assert.equal(w.document.documentElement.outerHTML, before);
+        assert.equal(w.history.pushState, pushState);
+        assert.equal(w.history.replaceState, replaceState);
+        const instance = w[Symbol.for('shared.imdb.radarr.sonarr.instance')];
+        assert.equal(instance.disabled, true, 'Legacy loaders must accept the intentional no-op');
+        assert.equal(instance.version, '5.6.7');
+    }
+});
+
+test('X exclusion does not match unrelated hostnames', async t => {
+    for (const hostname of ['examplex.com', 'x.com.example.org', 'twitter.com.example.org']) {
+        const h = setup(t, '<article><a href="https://imdb.com/title/tt123">Film</a></article>', `https://${hostname}/`);
+        await h.settle();
+        assert.ok(h.w.document.querySelector('.mdblist-link-wrap'));
+    }
+});
+
 test('irrelevant mutations and script-owned button text cause no document rescans', async t => {
     const h = setup(t, '<article><a href="https://imdb.com/title/tt123"><h3>Film</h3></a></article><div id="clock">0</div>', 'https://www.google.com/search?q=film');
     await h.settle();

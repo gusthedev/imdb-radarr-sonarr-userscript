@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.5.2
+// @version      1.5.3
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
 // @exclude      *://*.mdblist.com/*
+// @exclude      *://x.com/*
+// @exclude      *://*.x.com/*
+// @exclude      *://twitter.com/*
+// @exclude      *://*.twitter.com/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -20,6 +24,9 @@
 
 (function () {
     'use strict';
+
+    const hostname = location.hostname.toLowerCase().replace(/\.$/, '');
+    if (['x.com', 'twitter.com'].some(domain => hostname === domain || hostname.endsWith(`.${domain}`))) return;
 
     const AMBIGUOUS_BEHAVIOR_KEY = 'imdbRsLoader.ambiguousBehavior.v1';
     const storedAmbiguousBehavior = GM_getValue(AMBIGUOUS_BEHAVIOR_KEY, 'both');

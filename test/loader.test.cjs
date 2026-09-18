@@ -32,7 +32,7 @@ ${body}
 ${initialize ? `globalThis[Symbol.for('shared.imdb.radarr.sonarr.instance')] = { version: '${version}' };` : ''}`;
 }
 
-function runLoader({ storageValues = {}, response = null, requestFailure = '' } = {}) {
+function runLoader({ storageValues = {}, response = null, requestFailure = '', hostname = 'www.google.com' } = {}) {
     const storage = new Map(Object.entries(storageValues));
     const requests = [];
     const menus = new Map();
@@ -40,6 +40,7 @@ function runLoader({ storageValues = {}, response = null, requestFailure = '' } 
     const context = {
         Date,
         URL,
+        location: { hostname },
         console: { error() {}, info() {}, warn() {} },
         window: { alert: message => alerts.push(String(message)) },
         GM_getValue: (key, fallback) => storage.has(key) ? storage.get(key) : fallback,
@@ -60,6 +61,18 @@ function runLoader({ storageValues = {}, response = null, requestFailure = '' } 
 
 test('loader metadata allows IMDb title pages', () => {
     assert.doesNotMatch(loaderSource, /^\/\/\s*@exclude\s+\*:\/\/\*?\.?imdb\.com\//m);
+});
+
+test('loader leaves X and Twitter inactive even with an old cached core', () => {
+    for (const hostname of ['x.com', 'www.x.com', 'twitter.com', 'mobile.twitter.com']) {
+        const cached = core('5.6.6');
+        const h = runLoader({ hostname, storageValues: { [STORAGE.source]: cached } });
+        assert.equal(h.context.__coreRuns, undefined);
+        assert.equal(h.requests.length, 0);
+        assert.equal(h.menus.size, 0);
+        assert.equal(h.storage.size, 1);
+        assert.equal(h.storage.get(STORAGE.source), cached);
+    }
 });
 
 test('loader fetches the current branch through GitHub API raw media', () => {
