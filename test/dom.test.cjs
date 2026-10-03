@@ -51,7 +51,7 @@ test('core evaluated by an existing loader does nothing on X or Twitter', t => {
         assert.equal(w.history.replaceState, replaceState);
         const instance = w[Symbol.for('shared.imdb.radarr.sonarr.instance')];
         assert.equal(instance.disabled, true, 'Legacy loaders must accept the intentional no-op');
-        assert.equal(instance.version, '5.6.7');
+        assert.equal(instance.version, '5.6.8');
     }
 });
 
@@ -138,4 +138,60 @@ test('library matches exact IDs and opens the existing title instead of the add 
     h.w.dispatchEvent(new h.w.Event('focus'));
     await h.settle();
     assert.equal(calls, 1);
+});
+
+test('many Google titles use a single ownership scan per batch without cloning cards', async t => {
+    const h = setup(t, '', 'https://www.google.com/search?q=films');
+    await h.settle();
+    let ownerScans = 0, clones = 0;
+    const query = h.w.document.querySelectorAll.bind(h.w.document);
+    h.w.document.querySelectorAll = selector => {
+        if (selector === '.mdblist-link-wrap[data-imdb-rs-control="true"]') ownerScans++;
+        return query(selector);
+    };
+    const clone = h.w.Node.prototype.cloneNode;
+    h.w.Node.prototype.cloneNode = function (...args) { clones++; return clone.apply(this, args); };
+    h.w.document.body.innerHTML = Array.from({length: 40}, (_, i) =>
+        `<article><a href="https://themoviedb.org/movie/${i + 1}"><h3>Film ${i}</h3></a></article>`).join('');
+    await h.settle();
+    assert.equal(query('.mdblist-link-wrap').length, 40);
+    assert.equal(ownerScans, 1);
+    assert.equal(clones, 0);
+});
+
+test('staged results are decorated and control text cannot become TV evidence', async t => {
+    const h = setup(t, '<article><a href="https://imdb.com/title/tt123"></a></article>', 'https://www.google.com/search?q=film');
+    await h.settle();
+    h.w.document.querySelector('a').innerHTML = '<h3><span>Film</span> title</h3>';
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 2);
+    h.w.document.querySelector('button').textContent = 'TV Series';
+    h.w.dispatchEvent(new h.w.Event('focus'));
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 2);
+    h.w.document.querySelector('a').append(' TV Series');
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 1);
+    assert.equal(h.w.document.querySelector('button').textContent, 'Sonarr');
+});
+
+test('library IDs are indexed once and missing IDs and slugs never produce false matches', async t => {
+    let idReads = 0, calls = 0;
+    const rows = Array.from({length:1000}, (_, i) => ({
+        id:i + 1, get tmdbId() { idReads++; return i + 1; }, imdbId:'', tvdbId:0, titleSlug:`film-${i + 1}`
+    }));
+    const h = setup(t, Array.from({length:20}, (_, i) =>
+        `<article><a href="https://themoviedb.org/movie/${1000 - i}">Film ${i}</a></article>`).join('')
+        + '<article><a href="https://thetvdb.com/series/a-show">A Show</a></article>', 'https://example.org/', {
+        readLibrary: async type => { calls++; return {state:'ready', rows:type === 'movie' ? rows : [{id:9,tvdbId:0}]}; }
+    });
+    await h.settle();
+    assert.equal(idReads, 1000);
+    assert.equal(h.w.document.querySelectorAll('button').length, 21);
+    assert.equal([...h.w.document.querySelectorAll('button')].filter(b => b.textContent === '✓ In Radarr').length, 20);
+    assert.match(h.w.document.querySelector('article:last-child button').title, /needs an exact ID/);
+    h.w.dispatchEvent(new h.w.Event('focus'));
+    await h.settle();
+    assert.equal(calls, 2);
+    assert.equal(idReads, 1000);
 });
