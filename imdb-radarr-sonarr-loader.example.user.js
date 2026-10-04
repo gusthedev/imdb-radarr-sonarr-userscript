@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.5.3
+// @version      1.5.4
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -39,17 +39,17 @@
     const libraryFailures = new Map();
     const LIBRARY_TTL = 5 * 60 * 1000;
 
-    function readLibrary(type, force = false) {
+    function readLibrary(type) {
         const connection = LIBRARY_CONNECTIONS[type];
         if (!connection?.baseUrl || !connection.apiKey) return Promise.resolve({ state: 'unconfigured' });
         if (libraryRequests.has(type)) return libraryRequests.get(type);
         const cacheKey = `imdbRs.library.${type}.cache.v1`;
         const cached = GM_getValue(cacheKey, null);
-        if (!force && cached?.baseUrl === connection.baseUrl && Array.isArray(cached.rows)
+        if (cached?.baseUrl === connection.baseUrl && Array.isArray(cached.rows)
             && Date.now() - cached.at >= 0 && Date.now() - cached.at < LIBRARY_TTL) {
             return Promise.resolve({ state: 'ready', rows: cached.rows });
         }
-        if (!force && Date.now() - (libraryFailures.get(type) || 0) < 60_000) {
+        if (Date.now() - (libraryFailures.get(type) || 0) < 60_000) {
             return Promise.resolve({ state: 'unavailable' });
         }
         const request = new Promise(resolve => {
@@ -172,15 +172,17 @@
         return { primary, fallback: fallback === primary ? '' : fallback };
     }
 
-    function executeSharedCore(source, { clearRejected = true } = {}) {
+    // Callers validate source when reading the cache or receiving an update.
+    function executeSharedCore(source) {
         if (globalThis[INSTANCE_KEY]) return true;
-        if (activeSource || !isValidSharedCore(source)) return false;
+        if (activeSource) return false;
         try {
             eval(`${source}\n//# sourceURL=imdb-radarr-sonarr.user.js`);
             if (!globalThis[INSTANCE_KEY]) throw new Error('The shared core returned without initializing.');
             activeSource = source;
             // Starting an older working version must not pardon a rejected update.
-            if (clearRejected && GM_getValue(STORAGE.rejectedSignature, '') === sourceSignature(source)) {
+            const rejected = GM_getValue(STORAGE.rejectedSignature, '');
+            if (rejected && rejected === sourceSignature(source)) {
                 GM_deleteValue(STORAGE.rejectedSignature);
             }
             return true;
@@ -198,7 +200,7 @@
             GM_deleteValue(STORAGE.source);
             GM_deleteValue(STORAGE.etag);
         }
-        if (fallback && executeSharedCore(fallback, { clearRejected: false })) {
+        if (fallback && executeSharedCore(fallback)) {
             GM_setValue(STORAGE.source, fallback);
             GM_deleteValue(STORAGE.fallbackSource);
             GM_deleteValue(STORAGE.etag);

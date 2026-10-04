@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.7
+// @version      5.6.8
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -25,7 +25,7 @@
     // Mark an intentional no-op as initialized so they never restore an older,
     // active core on these sites. Do not touch the DOM or navigation APIs.
     if (['x.com', 'twitter.com'].some(domain => isDomainOrSubdomain(location.hostname, domain))) {
-        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.7', disabled: true });
+        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.8', disabled: true });
         return;
     }
 
@@ -88,7 +88,7 @@
         if (isDomainOrSubdomain(hostname, 'thetvdb.com')) {
             selectors.push('a[href*="/series/"]', 'a[href*="tab=series"]');
         }
-        return [...new Set(selectors)].join(', ');
+        return selectors.join(', ');
     }
 
     const LINK_SELECTOR = buildLinkSelector(pageHostname);
@@ -182,12 +182,15 @@
 
     function textWithoutControls(element) {
         if (!element) return '';
-        const clone = element.cloneNode?.(true);
-        if (clone) {
-            clone.querySelectorAll?.(CONTROL_SELECTOR).forEach(control => control.remove());
-            return String(clone.innerText || clone.textContent || '').trim();
-        }
-        return String(element.innerText || element.textContent || '').trim();
+        if (!element.querySelector?.(CONTROL_SELECTOR)) return String(element.textContent || element.innerText || '').trim();
+        // Walk text while skipping our controls; avoid cloning entire result cards.
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+            acceptNode: node => node.nodeType === 3 ? NodeFilter.FILTER_ACCEPT
+                : node.matches(CONTROL_SELECTOR) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP
+        });
+        let text = '', node;
+        while ((node = walker.nextNode())) text += node.textContent;
+        return text.trim();
     }
 
     function titleFromTVDBLink(link, url, container = null) {
@@ -387,16 +390,6 @@
         return normalizeComparableTitle(textWithoutControls(heading));
     }
 
-    function peerTypesForTitle(targetTitle, peers) {
-        const types = new Set();
-        for (const peer of peers) {
-            if (peer.title === targetTitle && ['movie', 'tv'].includes(peer.type)) {
-                types.add(peer.type);
-            }
-        }
-        return ['movie', 'tv'].filter(type => types.has(type));
-    }
-
     function buildExplicitPeerIndex() {
         const index = new Map();
         if (!location.hostname.includes('google.') && !location.hostname.includes('duckduckgo.com')) {
@@ -546,19 +539,24 @@
     const librarySnapshots = new Map();
     const libraryInFlight = new Map();
     const libraryButtons = new Set();
-    function matchLibraryItem(reference, rows) {
-        if (!Array.isArray(rows)) return null;
-        const field = { imdb: 'imdbId', tmdb: 'tmdbId', tvdb: 'tvdbId' }[reference.source];
-        if (!field || (reference.source !== 'imdb' && !/^\d+$/.test(reference.id))) return null;
-        return rows.find(item => String(item[field]) === String(reference.id)) || null;
+    function indexLibraryItems(rows = []) {
+        const items = new Map();
+        for (const row of rows) {
+            for (const source of ['imdb', 'tmdb', 'tvdb']) {
+                const id = row[source + 'Id'];
+                const key = `${source}:${id}`;
+                if (id && !items.has(key)) items.set(key, row);
+            }
+        }
+        return items;
     }
 
     function updateLibraryButton(button) {
-        const { reference, type, service, label, baseUrl } = button._library;
+        const { reference, type, service, label } = button._library;
         const snapshot = librarySnapshots.get(type);
-        const matched = snapshot?.state === 'ready' ? matchLibraryItem(reference, snapshot.rows) : null;
-        button._library.item = matched;
         const exact = reference.source === 'imdb' || /^\d+$/.test(reference.id);
+        const matched = exact ? snapshot?.items?.get(`${reference.source}:${reference.id}`) : null;
+        button._library.item = matched;
         const text = matched ? `✓ In ${service}` : label;
         if (button.textContent !== text) button.textContent = text;
         let hint = `Show this title in ${service}`;
@@ -585,7 +583,8 @@
             const request = Promise.resolve().then(() => loaderConfig.readLibrary(type));
             libraryInFlight.set(type, request);
             request.then(result => {
-                librarySnapshots.set(type, { ...result, at: Date.now() });
+                librarySnapshots.set(type, { state: result.state, at: Date.now(),
+                    items: result.state === 'ready' ? indexLibraryItems(result.rows) : null });
             }, () => librarySnapshots.set(type, { state: 'unavailable', at: Date.now() })).then(() => {
                 libraryInFlight.delete(type);
                 for (const button of libraryButtons) {
@@ -604,7 +603,7 @@
         const baseUrl = type === 'tv' ? config.sonarrBaseUrl : config.radarrBaseUrl;
         const label = pageLevel ? `Add to ${service}` : service;
         button.textContent = label;
-        button._library = { reference, type, service, label, baseUrl, item: null };
+        button._library = { reference, type, service, label, item: null };
         libraryButtons.add(button);
         button.title = `Show this title in ${service}`;
         button.setAttribute('aria-label', button.title);
@@ -629,23 +628,10 @@
         host.setAttribute('aria-label', 'Add this title to Radarr or Sonarr');
         // Inline-important host geometry and a shadow root keep provider CSS
         // and hover rules from hiding or restyling this floating control.
-        const hostStyles = {
-            all: 'initial',
-            display: 'block',
-            position: 'fixed',
-            right: '16px',
-            top: '12px',
-            margin: '0',
-            padding: '0',
-            visibility: 'visible',
-            opacity: '1',
-            transform: 'none',
-            pointerEvents: 'auto',
-            zIndex: '2147483647'
-        };
-        for (const [property, value] of Object.entries(hostStyles)) {
-            host.style.setProperty(property.replace(/[A-Z]/g, match => `-${match.toLowerCase()}`), value, 'important');
-        }
+        host.style.cssText = 'all:initial!important;display:block!important;position:fixed!important;'
+            + 'right:16px!important;top:12px!important;margin:0!important;padding:0!important;'
+            + 'visibility:visible!important;opacity:1!important;transform:none!important;'
+            + 'pointer-events:auto!important;z-index:2147483647!important';
 
         const shadow = host.attachShadow({ mode: 'open' });
         const style = document.createElement('style');
@@ -718,7 +704,7 @@
         return links;
     }
 
-    function reconcileContainer(container, peerIndex) {
+    function reconcileContainer(container, peerIndex, googleOwners) {
         if (!isElementNode(container) || !container.isConnected) return;
         knownContainers.add(container);
 
@@ -767,7 +753,7 @@
                 ? peerTypes
                 : serviceTypes(
                     preferred.reference,
-                    hasTVEvidenceForLink(preferred.link, container)
+                    !preferred.reference.type && hasTVEvidenceForLink(preferred.link, container)
                 );
             const signature = controlSignature(key, preferred.reference, types);
             const existing = controlsByKey.get(key) || [];
@@ -777,22 +763,8 @@
             for (const wrapper of existing) {
                 if (wrapper !== current) wrapper.remove();
             }
-            if (!current && location.hostname.includes('google.')) {
-                let ownedElsewhere = false;
-                for (const wrapper of document.querySelectorAll(CONTROL_SELECTOR)) {
-                    if (wrapper.dataset.mediaKey !== key) continue;
-                    const state = controlState.get(wrapper);
-                    if (!state?.owner?.isConnected) {
-                        wrapper.remove();
-                        continue;
-                    }
-                    if (state.container !== container) {
-                        ownedElsewhere = true;
-                        break;
-                    }
-                }
-                if (ownedElsewhere) continue;
-            }
+            const other = googleOwners?.get(key);
+            if (!current && other?.isConnected && controlState.get(other)?.container !== container) continue;
             if (!current) {
                 current = createMDBListButtons(
                     preferred.reference,
@@ -804,21 +776,20 @@
             } else {
                 rememberControl(current, preferred.link, container, signature);
             }
+            googleOwners?.set(key, current);
         }
     }
 
-    function collectKnownContainer(element, containers) {
+    function knownContainer(element) {
         for (let current = element; current; current = current.parentElement) {
-            if (knownContainers.has(current)) {
-                containers.add(current);
-                return;
-            }
+            if (knownContainers.has(current)) return current;
         }
     }
 
     function collectContainers(root, containers) {
         if (!(isDocumentNode(root) || isElementNode(root))) return;
-        if (isElementNode(root)) collectKnownContainer(root, containers);
+        const known = knownContainer(root);
+        if (known) containers.add(known);
 
         const links = [];
         if (isElementNode(root) && root.matches(LINK_SELECTOR)) links.push(root);
@@ -847,7 +818,15 @@
                 collectContainers(document, containers);
             }
         }
-        for (const container of containers) reconcileContainer(container, peerIndexCache);
+        // Index existing Google owners once per batch, rather than once per title.
+        const googleOwners = location.hostname.includes('google.') ? new Map() : null;
+        if (googleOwners) {
+            for (const wrapper of document.querySelectorAll(CONTROL_SELECTOR)) {
+                if (controlState.get(wrapper)?.owner?.isConnected) googleOwners.set(wrapper.dataset.mediaKey, wrapper);
+                else wrapper.remove();
+            }
+        }
+        for (const container of containers) reconcileContainer(container, peerIndexCache, googleOwners);
         refreshLibraryStatus();
     }
 
@@ -879,21 +858,7 @@
     }
 
     function queueContainingKnownContainer(element) {
-        for (let current = element; current; current = current.parentElement) {
-            if (knownContainers.has(current)) {
-                queueRoot(current);
-                return;
-            }
-        }
-    }
-
-    function childListRoots(mutation) {
-        const roots = [];
-        if (isElementNode(mutation.target)) roots.push(mutation.target);
-        for (const node of mutation.addedNodes || []) {
-            if (isElementNode(node)) roots.push(node);
-        }
-        return roots;
+        queueRoot(knownContainer(element));
     }
 
     function isOwnedNode(node) {
@@ -934,7 +899,6 @@
             if (target?.closest?.('h1, h2, h3, h4, [role="heading"]')
                 || changed.some(node => touchesSelector(node, LINK_SELECTOR + ', h1, h2, h3, h4, [role="heading"]'))) {
                 peerIndexDirty = true;
-                for (const root of childListRoots(mutation)) queueRoot(root);
                 if (target) queueRoot(target);
             }
             queueContainingKnownContainer(target);
@@ -950,7 +914,6 @@
             invalidateProvider,
             handleMutations,
             isOwnedNode,
-            matchLibraryItem,
             createProviderPageControl,
             buildLinkSelector,
             buildExplicitPeerIndex,
@@ -962,13 +925,11 @@
             hasMatchingControlMetadata,
             hasTVEvidence,
             isAnchorNode,
-            childListRoots,
             isDocumentNode,
             isElementNode,
             isMediaProviderDomain,
             mediaTypeFromStructuredTypes,
             normalizeComparableTitle,
-            peerTypesForTitle,
             referenceKey,
             serviceTypes
         });
@@ -1020,5 +981,5 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.7', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.8', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
 })();

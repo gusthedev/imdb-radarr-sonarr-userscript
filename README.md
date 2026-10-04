@@ -28,6 +28,8 @@ No API keys are needed for add-screen buttons. Optional library status requires 
 
 Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
 
+Core 5.6.8 indexes library IDs once per response, reads result text without cloning DOM cards, and scans Google control ownership once per batch. Loader 1.5.4 avoids revalidating source immediately before execution.
+
 Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive.
 
 ## Supported links
