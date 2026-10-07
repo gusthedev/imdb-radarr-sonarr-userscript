@@ -44,7 +44,9 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 
 ## Development checks
 
-Run `npm ci` followed by `npm test` with Node.js 18 or newer to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
+Use Node.js **24.19.0** to match CI. The jsdom 30.1.1 development dependency requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`; the root package declares the same supported range.
+
+Run `npm ci` followed by `npm test` to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
 
 Pull requests that change `imdb-radarr-sonarr.user.js` must change its semantic `@version` relative to the PR base. Keep the runtime instance version literals in sync with `@version`. CI compares the tested PR merge result with its exact base, fetching only that base at depth one; dependency-only (including Dependabot), workflow-only, documentation-only, and loader-only changes do not require a core bump. Only bump a loader version when that loader changes.
 
