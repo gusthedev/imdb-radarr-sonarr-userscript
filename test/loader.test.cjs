@@ -37,7 +37,9 @@ function runLoader({ storageValues = {}, response = null, requestFailure = '', h
     const requests = [];
     const menus = new Map();
     const alerts = [];
+    let syntaxChecks = 0;
     const context = {
+        Function: function (source) { syntaxChecks++; return new Function(source); },
         Date,
         URL,
         location: { hostname },
@@ -56,7 +58,7 @@ function runLoader({ storageValues = {}, response = null, requestFailure = '', h
     };
     context.globalThis = context;
     vm.runInNewContext(loaderSource, context, { filename: 'loader.user.js' });
-    return { alerts, context, menus, requests, storage };
+    return { alerts, context, menus, requests, storage, syntaxChecks: () => syntaxChecks };
 }
 
 test('loader metadata allows IMDb title pages', () => {
@@ -245,4 +247,10 @@ test('offline and login HTML responses are unknown, never an empty library', asy
     assert.equal((await read).state, 'unavailable');
     assert.equal((await harness.context.IMDB_RS_CONFIG.readLibrary('tv')).state, 'unavailable');
     assert.equal(harness.requests.length, 1);
+});
+
+test('warm startup validates cached source only once', () => {
+    const h = runLoader({ storageValues: { [STORAGE.source]: core('9.0.0'), [STORAGE.lastAttempt]: Date.now() } });
+    assert.equal(h.syntaxChecks(), 1);
+    assert.equal(h.requests.length, 0);
 });
