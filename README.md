@@ -28,6 +28,8 @@ No API keys are needed for add-screen buttons. Optional library status requires 
 
 Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
 
+Core 5.6.8 indexes library IDs once per response, reads result text without cloning DOM cards, and scans Google control ownership once per batch. Loader 1.5.4 avoids revalidating source immediately before execution.
+
 Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive.
 
 ## Supported links
@@ -43,3 +45,11 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 ## Development checks
 
 Run `npm ci` followed by `npm test` with Node.js 18 or newer to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
+
+Pull requests that change `imdb-radarr-sonarr.user.js` must change its semantic `@version` relative to the PR base. Keep the runtime instance version literals in sync with `@version`. CI compares the tested PR merge result with its exact base, fetching only that base at depth one; dependency-only (including Dependabot), workflow-only, documentation-only, and loader-only changes do not require a core bump. Only bump a loader version when that loader changes.
+
+To run the same check locally with the base and candidate commits available locally (CI uses the PR merge commit as the candidate):
+
+```sh
+node scripts/check-shared-core-version.cjs <base-sha> <candidate-sha> imdb-radarr-sonarr.user.js
+```

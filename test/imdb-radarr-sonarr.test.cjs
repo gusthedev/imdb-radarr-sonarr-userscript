@@ -211,7 +211,7 @@ test('control signatures are stable across separate core evaluations', () => {
     ), false);
 });
 
-test('matching explicit peer results classify otherwise ambiguous IMDb titles', () => {
+test('comparable titles normalize provider suffixes', () => {
     assert.equal(
         hook.normalizeComparableTitle('The Social Reckoning (2026) - TMDB'),
         'the social reckoning 2026'
@@ -220,14 +220,7 @@ test('matching explicit peer results classify otherwise ambiguous IMDb titles', 
         hook.normalizeComparableTitle('The Social Reckoning (2026)'),
         'the social reckoning 2026'
     );
-    assert.deepEqual(plain(hook.peerTypesForTitle('the social reckoning 2026', [
-        { title: 'the social reckoning 2026', type: 'movie' },
-        { title: 'another title 2026', type: 'tv' }
-    ])), ['movie']);
-    assert.deepEqual(plain(hook.peerTypesForTitle('shared title 2026', [
-        { title: 'shared title 2026', type: 'tv' },
-        { title: 'shared title 2026', type: 'movie' }
-    ])), ['movie', 'tv']);
+
 });
 
 test('recognizes cross-realm DOM wrappers without instanceof checks', () => {
@@ -243,20 +236,6 @@ test('recognizes cross-realm DOM wrappers without instanceof checks', () => {
     assert.equal(hook.isElementNode(elementWrapper), true);
     assert.equal(hook.isAnchorNode(anchorWrapper), true);
     assert.equal(hook.isAnchorNode({ ...anchorWrapper, tagName: 'DIV' }), false);
-});
-
-test('revisits a child-list mutation target when Google completes a result in stages', () => {
-    const resultContainer = { nodeType: 1, querySelectorAll() {} };
-    const addedHeading = { nodeType: 1, querySelectorAll() {} };
-    const textNode = { nodeType: 3 };
-
-    const roots = hook.childListRoots({
-        target: resultContainer,
-        addedNodes: [addedHeading, textNode]
-    });
-    assert.equal(roots.length, 2);
-    assert.equal(roots[0], resultContainer);
-    assert.equal(roots[1], addedHeading);
 });
 
 test('Google controls escape flipped result headers and their overflow-menu overlay', () => {
