@@ -26,9 +26,9 @@ The loader runs a validated last-known-good cached core immediately, checks this
 
 No API keys are needed for add-screen buttons. Optional library status requires your own API connections: add the API hosts to the private loader's `@connect` entries, then use **Configure library status** in the Tampermonkey menu and reload. Use addresses reachable from the browser's computer. Keep real URLs and keys out of this repository.
 
-Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
+Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results and failure backoff, starts fresh requests for displayed services, and ignores older pending responses. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
 
-Core 5.6.8 indexes library IDs once per response, reads result text without cloning DOM cards, and scans Google control ownership once per batch. Loader 1.5.4 avoids revalidating source immediately before execution.
+Core 5.6.9 and loader 1.5.5 isolate manual refreshes from older pending library requests. Update your locally installed loader while preserving private configuration, reload, run **Check for shared-core updates now**, then reload again to activate both parts of the fix. Library IDs remain indexed once per response; result text is read without cloning DOM cards, Google control ownership is scanned once per batch, and cached source is validated only once before execution.
 
 Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive.
 

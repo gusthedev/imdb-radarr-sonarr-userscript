@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr Loader
 // @namespace    local.imdb.radarr.sonarr.loader
-// @version      1.5.4
+// @version      1.5.5
 // @description  Loads the shared IMDb/TMDB/TVDB-to-Radarr/Sonarr script with private local configuration.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -37,6 +37,7 @@
     };
     const libraryRequests = new Map();
     const libraryFailures = new Map();
+    let libraryGeneration = 0;
     const LIBRARY_TTL = 5 * 60 * 1000;
 
     function readLibrary(type) {
@@ -52,9 +53,10 @@
         if (Date.now() - (libraryFailures.get(type) || 0) < 60_000) {
             return Promise.resolve({ state: 'unavailable' });
         }
+        const generation = libraryGeneration;
         const request = new Promise(resolve => {
             const fail = () => {
-                libraryFailures.set(type, Date.now());
+                if (generation === libraryGeneration) libraryFailures.set(type, Date.now());
                 resolve({ state: 'unavailable' });
             };
             try {
@@ -78,8 +80,10 @@
                                 monitored: item.monitored === true,
                                 hasFile: type === 'movie' ? item.hasFile === true : (item.statistics?.episodeFileCount || 0) > 0
                             }));
-                            GM_setValue(cacheKey, { baseUrl: connection.baseUrl, at: Date.now(), rows });
-                            libraryFailures.delete(type);
+                            if (generation === libraryGeneration) {
+                                GM_setValue(cacheKey, { baseUrl: connection.baseUrl, at: Date.now(), rows });
+                                libraryFailures.delete(type);
+                            }
                             resolve({ state: 'ready', rows });
                         } catch { fail(); }
                     },
@@ -88,7 +92,9 @@
             } catch { fail(); }
         });
         libraryRequests.set(type, request);
-        request.then(() => libraryRequests.delete(type));
+        request.then(() => {
+            if (generation === libraryGeneration) libraryRequests.delete(type);
+        });
         return request;
     }
 
@@ -362,6 +368,9 @@
     });
 
     GM_registerMenuCommand('Refresh library status', () => {
+        // Invalidate pending reads before asking the core to start fresh ones.
+        libraryGeneration++;
+        libraryRequests.clear();
         for (const type of ['movie', 'tv']) GM_deleteValue(`imdbRs.library.${type}.cache.v1`);
         libraryFailures.clear();
         globalThis[INSTANCE_KEY]?.refreshLibraryStatus?.();

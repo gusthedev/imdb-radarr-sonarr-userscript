@@ -249,6 +249,25 @@ test('offline and login HTML responses are unknown, never an empty library', asy
     assert.equal(harness.requests.length, 1);
 });
 
+test('manual refresh replaces pending loader reads and prevents stale cache writes', async () => {
+    const cacheKey = 'imdbRs.library.movie.cache.v1';
+    const h = runLoader({ storageValues: { [STORAGE.source]: core('8.0.0'), [STORAGE.lastAttempt]: Date.now(),
+        'imdbRs.library.movie.url': 'https://radarr.example.com', 'imdbRs.library.movie.key': 'local-test-key' } });
+    const read = () => h.context.IMDB_RS_CONFIG.readLibrary('movie');
+    const old = read();
+    h.menus.get('Refresh library status')();
+    const fresh = read();
+    assert.notEqual(fresh, old, 'manual refresh must not reuse the old promise');
+    assert.equal(h.requests.length, 2);
+    h.requests[0].onload({ status: 200, responseText: '[{"id":1}]' });
+    await old;
+    assert.equal(h.storage.has(cacheKey), false, 'old response must not repopulate the cache');
+    assert.equal(read(), fresh, 'old cleanup must not remove the fresh pending request');
+    h.requests[1].onload({ status: 200, responseText: '[{"id":2}]' });
+    await fresh;
+    assert.equal(h.storage.get(cacheKey).rows[0].id, 2);
+});
+
 test('warm startup validates cached source only once', () => {
     const h = runLoader({ storageValues: { [STORAGE.source]: core('9.0.0'), [STORAGE.lastAttempt]: Date.now() } });
     assert.equal(h.syntaxChecks(), 1);

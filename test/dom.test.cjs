@@ -51,7 +51,7 @@ test('core evaluated by an existing loader does nothing on X or Twitter', t => {
         assert.equal(w.history.replaceState, replaceState);
         const instance = w[Symbol.for('shared.imdb.radarr.sonarr.instance')];
         assert.equal(instance.disabled, true, 'Legacy loaders must accept the intentional no-op');
-        assert.equal(instance.version, '5.6.8');
+        assert.equal(instance.version, '5.6.9');
     }
 });
 
@@ -138,6 +138,26 @@ test('library matches exact IDs and opens the existing title instead of the add 
     h.w.dispatchEvent(new h.w.Event('focus'));
     await h.settle();
     assert.equal(calls, 1);
+});
+
+test('manual refresh replaces a pending core request and ignores its late rejection', async t => {
+    const requests = [];
+    const h = setup(t, '<h1>Film</h1>', 'https://www.themoviedb.org/movie/77-film', {
+        readLibrary: () => new Promise((resolve, reject) => requests.push({ resolve, reject }))
+    });
+    await h.settle();
+    assert.equal(requests.length, 1);
+    h.w[Symbol.for('shared.imdb.radarr.sonarr.instance')].refreshLibraryStatus();
+    await h.settle();
+    assert.equal(requests.length, 2, 'manual refresh must start a new read');
+    requests[1].resolve({ state: 'ready', rows: [{ id: 3, tmdbId: 77 }] });
+    await h.settle();
+    requests[0].reject(new Error('late failure'));
+    await h.settle();
+    assert.equal(providerButton(h.w.document).textContent, '✓ In Radarr');
+    h.w.dispatchEvent(new h.w.Event('focus'));
+    await h.settle();
+    assert.equal(requests.length, 2);
 });
 
 test('many Google titles use a single ownership scan per batch without cloning cards', async t => {
