@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.8
+// @version      5.6.9
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -25,7 +25,7 @@
     // Mark an intentional no-op as initialized so they never restore an older,
     // active core on these sites. Do not touch the DOM or navigation APIs.
     if (['x.com', 'twitter.com'].some(domain => isDomainOrSubdomain(location.hostname, domain))) {
-        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.8', disabled: true });
+        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.9', disabled: true });
         return;
     }
 
@@ -538,6 +538,7 @@
 
     const librarySnapshots = new Map();
     const libraryInFlight = new Map();
+    let libraryGeneration = 0;
     const libraryButtons = new Set();
     function indexLibraryItems(rows = []) {
         const items = new Map();
@@ -580,12 +581,20 @@
             const snapshot = librarySnapshots.get(type);
             const ttl = snapshot?.state === 'ready' ? 5 * 60_000 : 60_000;
             if (snapshot && Date.now() - snapshot.at < ttl) continue;
-            const request = Promise.resolve().then(() => loaderConfig.readLibrary(type));
+            const generation = libraryGeneration;
+            // A second manual refresh can supersede this read before it starts.
+            const request = Promise.resolve().then(() => {
+                if (generation === libraryGeneration) return loaderConfig.readLibrary(type);
+            });
             libraryInFlight.set(type, request);
             request.then(result => {
+                if (generation !== libraryGeneration) return;
                 librarySnapshots.set(type, { state: result.state, at: Date.now(),
                     items: result.state === 'ready' ? indexLibraryItems(result.rows) : null });
-            }, () => librarySnapshots.set(type, { state: 'unavailable', at: Date.now() })).then(() => {
+            }, () => {
+                if (generation === libraryGeneration) librarySnapshots.set(type, { state: 'unavailable', at: Date.now() });
+            }).then(() => {
+                if (generation !== libraryGeneration) return;
                 libraryInFlight.delete(type);
                 for (const button of libraryButtons) {
                     if (!button.isConnected) libraryButtons.delete(button);
@@ -981,5 +990,11 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.8', refreshLibraryStatus() { librarySnapshots.clear(); refreshLibraryStatus(); } });
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.9', refreshLibraryStatus() {
+        // Detach older reads; their completion must not publish or clear newer work.
+        libraryGeneration++;
+        librarySnapshots.clear();
+        libraryInFlight.clear();
+        refreshLibraryStatus();
+    } });
 })();
