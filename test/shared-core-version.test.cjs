@@ -104,12 +104,26 @@ test('missing version in the metadata block fails even if the body contains one'
 
 test('runtime constant must exist and match the bumped metadata', t => {
     const f = fixture(t);
-    for (const source of [core('1.2.4', '', '1.2.3'), core('1.2.4').replace(/const CORE_VERSION.*\n/, '')]) {
+    for (const source of [
+        core('1.2.4', '', '1.2.3'),
+        core('1.2.4').replace(/const CORE_VERSION.*\n/, ''),
+        core('1.2.4', "const CORE_VERSION = '1.2.4';")
+    ]) {
         const head = f.commit({ 'core.user.js': source });
         const result = f.check(head, true);
         assert.equal(result.status, 1);
         assert.match(result.stderr, /CORE_VERSION must match @version 1.2.4/);
     }
+});
+
+test('unchanged core with inconsistent runtime version still fails', t => {
+    const f = fixture(t);
+    const base = f.commit({ 'core.user.js': core('1.2.4', '', '1.2.3') });
+    const head = f.commit({ 'README.md': 'Documentation-only change' });
+    const result = f.check(head, true, f.repo, base);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /CORE_VERSION must match @version 1.2.4/);
+    assert.doesNotMatch(result.stdout, /unchanged/);
 });
 
 test('missing fetched base or deleted core fails rather than silently skipping', t => {

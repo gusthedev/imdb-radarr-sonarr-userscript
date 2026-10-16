@@ -31,19 +31,20 @@ try {
     });
     const before = read(base);
     const after = read(candidate);
+    const next = version(after, `${core} at candidate commit`);
+    // Consistency is required even when this change does not touch the core.
+    if (runtimeConstant) {
+        const declarations = [...after.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${runtimeConstant}\\s*=\\s*(['"])([^'"]+)\\1`, 'g'))];
+        if (declarations.length !== 1 || declarations[0][2] !== next) {
+            throw new Error(`${core}: ${runtimeConstant} must match @version ${next}.`);
+        }
+    }
     if (before === after) {
         console.log(`${core}: unchanged; no shared-core version bump required.`);
     } else {
         const previous = version(before, `${core} at base commit`);
-        const next = version(after, `${core} at candidate commit`);
         if (previous === next) {
             throw new Error(`${core} changed but @version is still ${next}. Bump the shared-core version; leave unchanged loaders alone.`);
-        }
-        if (runtimeConstant) {
-            const declarations = [...after.matchAll(new RegExp(`\\b(?:const|let|var)\\s+${runtimeConstant}\\s*=\\s*(['"])([^'"]+)\\1`, 'g'))];
-            if (declarations.length !== 1 || declarations[0][2] !== next) {
-                throw new Error(`${core}: ${runtimeConstant} must match @version ${next}.`);
-            }
         }
         console.log(`${core}: @version ${previous} -> ${next}.`);
     }

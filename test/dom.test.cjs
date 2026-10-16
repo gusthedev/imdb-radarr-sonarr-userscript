@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '..', 'imdb-radarr-sonarr.user.js'), 'utf8');
 
-function setup(t, html, url, extra = {}) {
+function setup(t, html, url, extra = {}, scriptSource = source) {
     const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
     t.after(() => { dom.window[Symbol.for('shared.imdb.radarr.sonarr.instance')]?.observer?.disconnect(); dom.window.close(); });
     const w = dom.window, frames = [];
@@ -14,7 +14,7 @@ function setup(t, html, url, extra = {}) {
     let scans = 0;
     const query = w.document.querySelectorAll.bind(w.document);
     w.document.querySelectorAll = selector => { scans++; return query(selector); };
-    w.eval(source);
+    w.eval(scriptSource);
     return { w, frames, scans: () => scans, async settle() {
         for (let i = 0; i < 12; i++) {
             await Promise.resolve();
@@ -28,6 +28,34 @@ function setup(t, html, url, extra = {}) {
 
 function providerButton(document) {
     return document.getElementById('imdb-rs-page-control')?.shadowRoot?.querySelector('button');
+}
+
+function assertInstanceVersion(w, scriptSource = source) {
+    const header = scriptSource.match(/^\/\/ ==UserScript==\r?\n([\s\S]*?)^\/\/ ==\/UserScript==[ \t]*\r?$/m)?.[1] || '';
+    const versions = [...header.matchAll(/^\/\/[ \t]*@version[ \t]+([^\r\n]*)/gm)];
+    assert.equal(versions.length, 1, 'The core must declare one metadata version');
+    assert.equal(w[Symbol.for('shared.imdb.radarr.sonarr.instance')].version,
+        versions[0][1].trim(), 'Runtime instance version must match userscript @version');
+}
+
+test('normal runtime instance reports the metadata version', async t => {
+    const h = setup(t, '', 'https://www.google.com/search?q=film');
+    await h.settle();
+    assertInstanceVersion(h.w);
+});
+
+for (const hostname of ['www.google.com', 'x.com', 'mobile.twitter.com']) {
+    test(`metadata-only version bump fails runtime consistency on ${hostname}`, async t => {
+        // Exercise the real core with stale runtime code, not a hardcoded version assertion.
+        const bumped = source.replace(/^(\/\/[ \t]*@version[ \t]+)(\d+)/m,
+            (_, prefix, major) => `${prefix}${Number(major) + 1}`);
+        assert.notEqual(bumped, source);
+        const h = setup(t, '', `https://${hostname}/`, {}, bumped);
+        await h.settle();
+        assert.throws(() => assertInstanceVersion(h.w, bumped), {
+            code: 'ERR_ASSERTION', message: /Runtime instance version must match userscript @version/
+        });
+    });
 }
 
 test('core evaluated by an existing loader does nothing on X or Twitter', t => {
@@ -51,7 +79,7 @@ test('core evaluated by an existing loader does nothing on X or Twitter', t => {
         assert.equal(w.history.replaceState, replaceState);
         const instance = w[Symbol.for('shared.imdb.radarr.sonarr.instance')];
         assert.equal(instance.disabled, true, 'Legacy loaders must accept the intentional no-op');
-        assert.equal(instance.version, '5.6.10');
+        assertInstanceVersion(w);
     }
 });
 

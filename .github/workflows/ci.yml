@@ -33,7 +33,7 @@ jobs:
           fi
           # Checkout has the PR merge result or pushed tip; fetch only the exact base.
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          node scripts/check-shared-core-version.cjs "$BASE_SHA" "$CANDIDATE_SHA" imdb-radarr-sonarr.user.js
+          node scripts/check-shared-core-version.cjs "$BASE_SHA" "$CANDIDATE_SHA" imdb-radarr-sonarr.user.js CORE_VERSION
       - name: Check syntax
         run: |
           node --check imdb-radarr-sonarr.user.js

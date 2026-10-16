@@ -16,8 +16,8 @@ assert.ok(step, 'CI must include the shared-core version step');
 const run = step.match(/^        run: \|\n([\s\S]*)/m)?.[1].replace(/^          /gm, '');
 assert.ok(run, 'Exercise the actual CI shell commands');
 
-const core = (version, body = '') =>
-    `// ==UserScript==\n// @version ${version}\n// ==/UserScript==\n${body}\n`;
+const core = (version, body = '', runtime = version) =>
+    `// ==UserScript==\n// @version ${version}\n// ==/UserScript==\nconst CORE_VERSION = '${runtime}';\n${body}\n`;
 
 function fixture(t) {
     const root = mkdtempSync(join(tmpdir(), 'ci-workflow-'));
@@ -118,6 +118,19 @@ test('push passes when a version bump occurs before the last commit in the pushe
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /1.2.3 -> 1.2.4/);
 });
+
+for (const eventName of ['pull_request', 'push']) {
+    test(`${eventName} rejects a metadata-only bump with a stale runtime version`, t => {
+        const f = fixture(t);
+        const candidate = f.commit({ [coreFile]: core('1.2.4', '\n'.repeat(12) + '// original behavior', '1.2.3') });
+        const event = eventName === 'pull_request'
+            ? { pull_request: { base: { sha: f.base } } }
+            : { before: f.base };
+        const result = f.check(eventName, event, candidate);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /CORE_VERSION must match @version 1.2.4/);
+    });
+}
 
 test('push with only workflow, dependency, documentation, and loader changes needs no core bump', t => {
     const f = fixture(t);

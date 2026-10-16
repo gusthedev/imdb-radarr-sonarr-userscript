@@ -48,10 +48,10 @@ Use Node.js **24.19.0** to match CI. The jsdom 30.1.2 development dependency req
 
 Run `npm ci` followed by `npm test` to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
 
-Pull requests that change `imdb-radarr-sonarr.user.js` must change its semantic `@version` relative to the PR base. Keep the runtime instance version literals in sync with `@version`. CI compares the tested PR merge result with its exact base, fetching only that base at depth one; dependency-only (including Dependabot), workflow-only, documentation-only, and loader-only changes do not require a core bump. Only bump a loader version when that loader changes.
+Changes to `imdb-radarr-sonarr.user.js` must change its semantic `@version` relative to the PR base or the previous main revision. Both runtime initialization paths use `CORE_VERSION`, which must match `@version`. CI enforces this consistency even when the core is unchanged, and DOM tests check the normal and excluded-domain instances against the metadata. CI compares the tested PR merge result with its exact base, or the main push tip with the push's previous revision, fetching only that base at depth one; dependency-only (including Dependabot), workflow-only, documentation-only, and loader-only changes do not require a core bump. Only bump a loader version when that loader changes.
 
 To run the same check locally with the base and candidate commits available locally (CI uses the PR merge commit as the candidate):
 
 ```sh
-node scripts/check-shared-core-version.cjs <base-sha> <candidate-sha> imdb-radarr-sonarr.user.js
+node scripts/check-shared-core-version.cjs <base-sha> <candidate-sha> imdb-radarr-sonarr.user.js CORE_VERSION
 ```
