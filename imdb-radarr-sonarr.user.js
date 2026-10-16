@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.9
+// @version      5.6.10
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -25,7 +25,7 @@
     // Mark an intentional no-op as initialized so they never restore an older,
     // active core on these sites. Do not touch the DOM or navigation APIs.
     if (['x.com', 'twitter.com'].some(domain => isDomainOrSubdomain(location.hostname, domain))) {
-        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.9', disabled: true });
+        globalThis[INSTANCE_KEY] = Object.freeze({ version: '5.6.10', disabled: true });
         return;
     }
 
@@ -773,7 +773,14 @@
                 if (wrapper !== current) wrapper.remove();
             }
             const other = googleOwners?.get(key);
-            if (!current && other?.isConnected && controlState.get(other)?.container !== container) continue;
+            if (!current && other?.isConnected && controlState.get(other)?.container !== container) {
+                const owner = controlState.get(other)?.owner;
+                // AI Overview citations can precede the real title result.
+                // Let the stronger result claim the one control, but keep
+                // equal-ranked owners stable across rescans and hover updates.
+                if (owner?.isConnected && linkPlacementScore(preferred.link) <= linkPlacementScore(owner)) continue;
+                other.remove();
+            }
             if (!current) {
                 current = createMDBListButtons(
                     preferred.reference,
@@ -990,7 +997,7 @@
         childList: true,
         subtree: true
     });
-    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.9', refreshLibraryStatus() {
+    globalThis[INSTANCE_KEY] = Object.freeze({ observer, version: '5.6.10', refreshLibraryStatus() {
         // Detach older reads; their completion must not publish or clear newer work.
         libraryGeneration++;
         librarySnapshots.clear();

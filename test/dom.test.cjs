@@ -51,7 +51,7 @@ test('core evaluated by an existing loader does nothing on X or Twitter', t => {
         assert.equal(w.history.replaceState, replaceState);
         const instance = w[Symbol.for('shared.imdb.radarr.sonarr.instance')];
         assert.equal(instance.disabled, true, 'Legacy loaders must accept the intentional no-op');
-        assert.equal(instance.version, '5.6.9');
+        assert.equal(instance.version, '5.6.10');
     }
 });
 
@@ -107,6 +107,34 @@ test('duplicate Google cards keep one stable owner outside flipped headers', asy
     controls = h.w.document.querySelectorAll('.mdblist-link-wrap');
     assert.equal(controls.length, 1);
     assert.equal(controls[0].previousElementSibling.id, 'second');
+});
+
+for (const delayed of [false, true]) test(`Google title result outranks an AI citation (${delayed ? 'late result' : 'initial page'})`, async t => {
+    const overview = '<section id="overview"><h3>AI Overview</h3><div><a href="https://imdb.com/title/tt26598805/">IMDb</a></div></section>';
+    const result = '<section id="result"><div style="transform: scaleY(-1)"><a href="https://imdb.com/title/tt26598805/"><h3>Nocturne (TV Series 2026)</h3></a></div></section>';
+    const h = setup(t, overview + (delayed ? '' : result), 'https://www.google.com/search?q=nocturne');
+    await h.settle();
+    if (delayed) {
+        assert.ok(h.w.document.querySelector('#overview .mdblist-link-wrap'));
+        h.w.document.body.insertAdjacentHTML('beforeend', result);
+        await h.settle();
+    }
+    const wrapper = h.w.document.querySelector('.mdblist-link-wrap');
+    assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
+    assert.equal(wrapper.previousElementSibling?.id, 'result');
+    assert.equal(wrapper.textContent, 'Sonarr');
+
+    // Reprocessing the earlier citation must not take the control back.
+    h.w.document.querySelector('#overview h3').textContent = 'Updated AI Overview';
+    h.w.dispatchEvent(new h.w.Event('focus'));
+    await h.settle();
+    assert.equal(h.w.document.querySelector('.mdblist-link-wrap'), wrapper);
+    assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
+
+    h.w.document.getElementById('result').remove();
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
+    assert.ok(h.w.document.querySelector('#overview .mdblist-link-wrap'));
 });
 
 test('provider metadata is cached, ignores nested recommendations, and follows navigation', async t => {
