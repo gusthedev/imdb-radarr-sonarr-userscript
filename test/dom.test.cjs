@@ -8,14 +8,16 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'imdb-radarr-sonarr.us
 function setup(t, html, url, extra = {}, scriptSource = source) {
     const dom = new JSDOM(html, { url, runScripts: 'outside-only', pretendToBeVisual: true });
     t.after(() => { dom.window[Symbol.for('shared.imdb.radarr.sonarr.instance')]?.observer?.disconnect(); dom.window.close(); });
-    const w = dom.window, frames = [];
+    const w = dom.window, frames = [], timers = [];
+    const setTimeout = w.setTimeout.bind(w);
+    w.setTimeout = (fn, delay, ...args) => { timers.push(delay); return setTimeout(fn, delay, ...args); };
     w.requestAnimationFrame = fn => { frames.push(fn); return frames.length; };
     w.IMDB_RS_CONFIG = { radarrBaseUrl: 'https://radarr.example.com', sonarrBaseUrl: 'https://sonarr.example.com', ...extra };
     let scans = 0;
     const query = w.document.querySelectorAll.bind(w.document);
     w.document.querySelectorAll = selector => { scans++; return query(selector); };
     w.eval(scriptSource);
-    return { w, frames, scans: () => scans, async settle() {
+    return { w, frames, timers, scans: () => scans, async settle() {
         for (let i = 0; i < 12; i++) {
             await Promise.resolve();
             const current = frames.splice(0);
@@ -43,6 +45,103 @@ test('normal runtime instance reports the metadata version', async t => {
     await h.settle();
     assertInstanceVersion(h.w);
 });
+
+test('href hydration and replacement work without timed startup rescans', async t => {
+    const h = setup(t, '<article><a href="/redirect"><h3>Film</h3></a></article>', 'https://www.google.com/search?q=film');
+    await h.settle();
+    assert.deepEqual(h.timers, [], 'startup must not schedule full-page rescans');
+    const anchor = h.w.document.querySelector('a');
+    anchor.href = 'https://imdb.com/title/tt123/';
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 2);
+    anchor.href = 'https://themoviedb.org/movie/77-film';
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 1);
+    assert.equal(h.w.document.querySelector('button').textContent, 'Radarr');
+    anchor.href = 'https://example.org/not-a-title';
+    await h.settle();
+    assert.equal(h.w.document.querySelectorAll('article button').length, 0);
+    assert.deepEqual(h.timers, []);
+});
+
+for (const url of ['https://www.google.com/search?q=show', 'https://duckduckgo.com/?q=show', 'https://example.org/']) {
+    test(`late result insertion and text hydration work on ${new URL(url).hostname}`, async t => {
+        const h = setup(t, '<article><a href="/movie/77">Unrelated local link</a></article>', url);
+        await h.settle();
+        assert.equal(h.w.document.querySelectorAll('button').length, 0);
+        h.w.document.body.insertAdjacentHTML('beforeend', '<article id="result"><a href="https://imdb.com/title/tt123/"><h3>Show</h3></a></article>');
+        await h.settle();
+        const result = h.w.document.getElementById('result');
+        assert.equal(result.querySelectorAll('button').length, 2);
+        result.querySelector('h3').firstChild.data = 'Show (TV Series)';
+        await h.settle();
+        assert.equal(result.querySelectorAll('button').length, 1);
+        assert.equal(result.querySelector('button').textContent, 'Sonarr');
+        assert.deepEqual(h.timers, []);
+    });
+}
+
+for (const [url, label] of [
+    ['https://www.imdb.com/title/tt123/', 'Add to Sonarr'],
+    ['https://www.themoviedb.org/movie/77-film', 'Add to Radarr'],
+    ['https://www.themoviedb.org/pt-BR/tv/88-show', 'Add to Sonarr'],
+    ['https://thetvdb.com/series/a-show', 'Add to Sonarr']
+]) {
+    test(`provider title uses only its isolated page control: ${url}`, async t => {
+        const h = setup(t, '<h1>A Show</h1><script type="application/ld+json">{"@type":"TVSeries"}</script>'
+            + '<article><a href="/movie/99">Related movie</a><a href="/series/99">Related show</a>'
+            + '<a href="https://imdb.com/title/tt456/">Related IMDb title</a></article>', url);
+        await h.settle();
+        assert.equal(h.w.document.querySelectorAll('#imdb-rs-page-control').length, 1);
+        assert.equal(providerButton(h.w.document).textContent, label);
+        assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap, #mdblist-userscript-styles').length, 0);
+        assert.deepEqual(h.timers, []);
+    });
+}
+
+for (const [url, titlePath, descendantPath] of [
+    ['https://www.imdb.com/chart/top/', '/title/tt123/', '/title/tt123/episodes/'],
+    ['https://www.themoviedb.org/movie', '/movie/77-film', '/movie/77-film/cast'],
+    ['https://thetvdb.com/series', '/series/a-show', '/series/a-show/episodes/123']
+]) {
+    test(`provider listing/title/descendant navigation stays page-only on ${new URL(url).hostname}`, async t => {
+        const h = setup(t, '<h1>A Show</h1><a href="https://imdb.com/title/tt123/">Related title</a>', url);
+        await h.settle();
+        assert.equal(providerButton(h.w.document), undefined);
+        h.w.history.pushState({}, '', titlePath);
+        await h.settle();
+        assert.ok(providerButton(h.w.document));
+        // Metadata can arrive separately from navigation, including a delayed type attribute.
+        h.w.document.head.insertAdjacentHTML('beforeend', '<script type="text/plain">{"@type":"TVSeries"}</script>');
+        await h.settle();
+        h.w.document.querySelector('script').type = 'application/ld+json';
+        await h.settle();
+        assert.equal(providerButton(h.w.document).textContent,
+            url.includes('themoviedb') ? 'Add to Radarr' : 'Add to Sonarr');
+        h.w.history.replaceState({}, '', descendantPath);
+        await h.settle();
+        assert.equal(providerButton(h.w.document), undefined);
+        assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap, #mdblist-userscript-styles').length, 0);
+        assert.deepEqual(h.timers, []);
+    });
+}
+
+for (const url of ['https://www.google.com/search?q=film', 'https://www.themoviedb.org/movie/77-film']) {
+    test(`page/tab restoration recovers missing controls on ${new URL(url).hostname}`, async t => {
+        const h = setup(t, '<article><a href="https://themoviedb.org/movie/77-film"><h3>Film</h3></a></article>', url);
+        await h.settle();
+        const selector = '.mdblist-link-wrap, #imdb-rs-page-control';
+        for (const event of ['pageshow', 'focus', 'visibilitychange']) {
+            h.w.document.querySelector(selector).remove();
+            await h.settle();
+            assert.equal(h.w.document.querySelector(selector), null);
+            const target = event === 'visibilitychange' ? h.w.document : h.w;
+            target.dispatchEvent(new h.w.Event(event));
+            await h.settle();
+            assert.equal(h.w.document.querySelectorAll(selector).length, 1);
+        }
+    });
+}
 
 for (const hostname of ['www.google.com', 'x.com', 'mobile.twitter.com']) {
     test(`metadata-only version bump fails runtime consistency on ${hostname}`, async t => {

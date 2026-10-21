@@ -28,9 +28,11 @@ No API keys are needed for add-screen buttons. Optional library status requires 
 
 Library checks use GET only, coalesce concurrent requests, cache compact results for five minutes, and back off for one minute after failures. Exact IMDb/TMDB/TVDB IDs can show “In Radarr/Sonarr” and open the existing title. Slug-only references and offline/login responses never claim a title is absent. **Refresh library status** clears cached results and failure backoff, starts fresh requests for displayed services, and ignores older pending responses. API keys stay in private Tampermonkey storage; the core receives only compact library metadata.
 
-Core 5.6.9 and loader 1.5.5 isolate manual refreshes from older pending library requests. Update your locally installed loader while preserving private configuration, reload, run **Check for shared-core updates now**, then reload again to activate both parts of the fix. Library IDs remain indexed once per response; result text is read without cloning DOM cards, Google control ownership is scanned once per batch, and cached source is validated only once before execution.
+Library IDs are indexed once per response; result text is read without cloning DOM cards, Google control ownership is scanned once per batch, and cached source is validated only once before execution.
 
-Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive.
+Provider pages use one isolated title-page control, not inline poster/link controls or global search-result styles. Provider metadata is cached until relevant changes or navigation. Search-page processing ignores its own controls and reuses the peer index while preserving reclassification when explicit peer results arrive. Mutation handling covers delayed links, changed URLs, and staged text/metadata without timed startup rescans; page restoration, tab focus, and visibility changes remain recovery points.
+
+Core 5.6.12 removes unused provider-relative selectors, search styles on provider pages, and redundant timed startup rescans. Safari cross-realm and hover protections, Google placement/deduplication, useful legacy TVDB input URLs, and loader cache/rollback recovery remain supported. This core-only update does not require a loader reinstall: use **Check for shared-core updates now**, then reload the page.
 
 ## Supported links
 
@@ -46,7 +48,7 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 
 Use Node.js **24.19.0** to match CI. The jsdom 30.1.3 development dependency requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`; the root package declares the same supported range.
 
-Run `npm ci` followed by `npm test` to exercise canonical URL parsing, legacy TVDB IDs, host-scoped relative selectors, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass.
+Run `npm ci` followed by `npm test` to exercise canonical URL parsing, legacy TVDB IDs, isolated provider controls and navigation, delayed search-result hydration, page/tab restoration, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass. The single CI workflow and weekly dependency updates remain active; there are no separate legacy publishing workflows.
 
 Changes to `imdb-radarr-sonarr.user.js` must change its semantic `@version` relative to the PR base or the previous main revision. Both runtime initialization paths use `CORE_VERSION`, which must match `@version`. CI enforces this consistency even when the core is unchanged, and DOM tests check the normal and excluded-domain instances against the metadata. CI compares the tested PR merge result with its exact base, or the main push tip with the push's previous revision, fetching only that base at depth one; dependency-only (including Dependabot), workflow-only, documentation-only, and loader-only changes do not require a core bump. Only bump a loader version when that loader changes.
 

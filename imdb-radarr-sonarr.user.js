@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.11
+// @version      5.6.12
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    const CORE_VERSION = '5.6.11';
+    const CORE_VERSION = '5.6.12';
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     if (globalThis[INSTANCE_KEY]) return;
 
@@ -77,22 +77,9 @@
     const pageHostname = normalizeHostname(location.hostname);
     if (config.excludedDomains.some(domain => isDomainOrSubdomain(pageHostname, domain))) return;
 
-    function buildLinkSelector(hostname) {
-        const selectors = [
-            'a[href*="imdb.com/title/"]',
-            'a[href*="themoviedb.org/"]',
-            'a[href*="thetvdb.com/"]'
-        ];
-        if (isDomainOrSubdomain(hostname, 'themoviedb.org')) {
-            selectors.push('a[href*="/movie/"]', 'a[href*="/tv/"]');
-        }
-        if (isDomainOrSubdomain(hostname, 'thetvdb.com')) {
-            selectors.push('a[href*="/series/"]', 'a[href*="tab=series"]');
-        }
-        return selectors.join(', ');
-    }
-
-    const LINK_SELECTOR = buildLinkSelector(pageHostname);
+    const providerPage = isMediaProviderDomain(pageHostname);
+    // Inline controls only run off-provider, where title links include a provider host.
+    const LINK_SELECTOR = 'a[href*="imdb.com/title/"], a[href*="themoviedb.org/"], a[href*="thetvdb.com/"]';
     const CONTROL_SELECTOR = '.mdblist-link-wrap[data-imdb-rs-control="true"]';
     const PAGE_CONTROL_ID = 'imdb-rs-page-control';
     const TV_PATTERNS = [
@@ -689,22 +676,19 @@
     }
 
     function reconcileProviderPageControl() {
-        if (!isMediaProviderDomain(pageHostname)) return false;
-
         const reference = currentPageReference();
         const existing = document.getElementById(PAGE_CONTROL_ID);
         if (!reference) {
             existing?.remove();
-            return true;
+            return;
         }
 
         const types = serviceTypes(reference);
         const signature = controlSignature(referenceKey(reference), reference, types);
-        if (existing?.dataset.signature === signature) return true;
+        if (existing?.dataset.signature === signature) return;
         existing?.remove();
 
         createProviderPageControl(reference, types, signature);
-        return true;
     }
 
     function linksInContainer(container) {
@@ -823,7 +807,11 @@
     function processRoots(roots) {
         // On the official providers, avoid decorating every poster/title link.
         // Only canonical title pages receive one page-level action group.
-        if (reconcileProviderPageControl()) { refreshLibraryStatus(); return; }
+        if (providerPage) {
+            reconcileProviderPageControl();
+            refreshLibraryStatus();
+            return;
+        }
         const containers = new Set();
         for (const root of roots) collectContainers(root, containers);
         if (!containers.size) return;
@@ -890,12 +878,11 @@
     }
 
     function handleMutations(mutations) {
-        const provider = isMediaProviderDomain(pageHostname);
         for (const mutation of mutations) {
             if (isOwnedNode(mutation.target)) continue;
             const changed = [...(mutation.addedNodes || []), ...(mutation.removedNodes || [])];
             if (mutation.type === 'childList' && changed.length && changed.every(isOwnedNode)) continue;
-            if (provider) {
+            if (providerPage) {
                 const target = isElementNode(mutation.target) ? mutation.target : mutation.target?.parentElement;
                 if (location.href !== providerCache?.href || target?.closest?.(PROVIDER_METADATA)
                     || changed.some(node => touchesSelector(node, PROVIDER_METADATA))) {
@@ -932,7 +919,6 @@
             handleMutations,
             isOwnedNode,
             createProviderPageControl,
-            buildLinkSelector,
             buildExplicitPeerIndex,
             controlSignature,
             extractPageReference,
@@ -953,15 +939,13 @@
         return;
     }
 
-    addStyles();
+    if (!providerPage) addStyles();
     processRoots([document]);
 
-    // Search pages often finish hydrating after document-idle without producing
-    // a mutation that contains the final canonical link. A few bounded rescans
-    // cover that startup window, and returning to the tab provides a cheap
-    // recovery point without running a permanent polling loop.
+    // Mutation handling covers staged links, href changes, and provider metadata.
+    // Tab/page restoration remains a recovery point without timed startup rescans.
     const reconcilePage = () => {
-        // Focus refreshes library status; only initial hydration/navigation invalidate page data.
+        // Focus refreshes library status without invalidating unchanged page data.
         queueRoot(document);
     };
     const navigate = () => {
@@ -983,7 +967,6 @@
             };
         } catch { /* Provider metadata mutations also cover navigation. */ }
     }
-    for (const delay of [250, 1_000, 3_000]) setTimeout(reconcilePage, delay);
     globalThis.addEventListener?.('pageshow', reconcilePage);
     globalThis.addEventListener?.('focus', reconcilePage);
     document.addEventListener('visibilitychange', () => {
