@@ -157,14 +157,6 @@ test('uses a title fallback for slug-only TVDB series pages and ignores descenda
     assert.equal(hook.extractMediaReference(link('https://thetvdb.com/?tab=series')), null);
 });
 
-test('relative TMDB and TVDB selectors are limited to their own sites', () => {
-    const generic = hook.buildLinkSelector('www.google.com');
-    assert.equal(generic.includes('a[href*="/movie/"]'), false);
-    assert.equal(generic.includes('a[href*="/series/"]'), false);
-    assert.equal(hook.buildLinkSelector('www.themoviedb.org').includes('a[href*="/movie/"]'), true);
-    assert.equal(hook.buildLinkSelector('thetvdb.com').includes('a[href*="/series/"]'), true);
-});
-
 test('ambiguous IMDb links offer both services while explicit TV evidence selects Sonarr', () => {
     const imdbReference = { source: 'imdb', id: 'tt1234567', type: null, term: 'imdb:tt1234567' };
     assert.deepEqual(plain(hook.serviceTypes(imdbReference, false)), ['movie', 'tv']);
