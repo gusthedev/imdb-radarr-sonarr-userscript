@@ -46,7 +46,7 @@ Episode, season, cast, person, and other descendant pages are intentionally igno
 
 ## Development checks
 
-Use Node.js **24.19.0** to match CI. The jsdom 30.1.3 development dependency requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`; the root package declares the same supported range.
+Use Node.js **24.22.1** to match CI. The jsdom 30.1.3 development dependency requires Node.js `^22.22.2 || ^24.15.0 || >=26.0.0`; the root package declares the same supported range.
 
 Run `npm ci` followed by `npm test` to exercise canonical URL parsing, legacy TVDB IDs, isolated provider controls and navigation, delayed search-result hydration, page/tab restoration, ambiguous IMDb preferences, safe Google placement, cross-browser DOM wrappers, cold and warm cache behavior, rollback recovery, offline fallback, status reporting, and manual cache bypass. The single CI workflow and weekly dependency updates remain active; there are no separate legacy publishing workflows.
 
