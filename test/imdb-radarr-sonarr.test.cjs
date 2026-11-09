@@ -157,6 +157,29 @@ test('uses a title fallback for slug-only TVDB series pages and ignores descenda
     assert.equal(hook.extractMediaReference(link('https://thetvdb.com/?tab=series')), null);
 });
 
+test('TVDB movies use a Radarr title search, never a TVDB ID search', () => {
+    const title = 'Gianmarco Soresi: God Forbid';
+    for (const slug of ['gianmarco-soresi-god-forbid', '377642']) {
+        const reference = hook.extractMediaReference(link(`https://www.thetvdb.com/movies/${slug}/`, title));
+        assert.deepEqual(plain(reference), { source: 'tvdb', id: slug, type: 'movie', term: title });
+        assert.deepEqual(plain(hook.serviceTypes(reference, true)), ['movie']);
+    }
+    assert.deepEqual(
+        plain(hook.extractPageReference('https://thetvdb.com/movies/gianmarco-soresi-god-forbid', `${title} - TheTVDB.com`)),
+        { source: 'tvdb', id: 'gianmarco-soresi-god-forbid', type: 'movie', term: title }
+    );
+    assert.deepEqual(
+        plain(hook.extractMediaReference(link('https://thetvdb.com/pt-BR/movies/gianmarco-soresi-god-forbid', 'TheTVDB.com'))),
+        { source: 'tvdb', id: 'gianmarco-soresi-god-forbid', type: 'movie', term: 'gianmarco soresi god forbid' }
+    );
+    assert.equal(hook.extractMediaReference(link('https://thetvdb.com/movies/377642')), null);
+    assert.equal(hook.extractMediaReference(link('https://thetvdb.com/movies/1917', '1917')).term, '1917');
+    for (const path of ['movies', 'movies/gianmarco-soresi-god-forbid/people/69550182',
+        'movies/gianmarco-soresi-god-forbid/artwork', 'movies/gianmarco-soresi-god-forbid/trailers']) {
+        assert.equal(hook.extractMediaReference(link(`https://thetvdb.com/${path}`, title)), null);
+    }
+});
+
 test('ambiguous IMDb links offer both services while explicit TV evidence selects Sonarr', () => {
     const imdbReference = { source: 'imdb', id: 'tt1234567', type: null, term: 'imdb:tt1234567' };
     assert.deepEqual(plain(hook.serviceTypes(imdbReference, false)), ['movie', 'tv']);

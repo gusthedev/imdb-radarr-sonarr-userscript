@@ -34,12 +34,15 @@ Provider pages use one isolated title-page control, not inline poster/link contr
 
 Core 5.6.12 removes unused provider-relative selectors, search styles on provider pages, and redundant timed startup rescans. Safari cross-realm and hover protections, Google placement/deduplication, useful legacy TVDB input URLs, and loader cache/rollback recovery remain supported. This core-only update does not require a loader reinstall: use **Check for shared-core updates now**, then reload the page.
 
+Core 5.6.13 adds TVDB movie links to search-result controls and isolated provider-page controls. Movies open Radarr by title; TVDB series still open Sonarr. Cast/person and other descendant links remain ignored.
+
 ## Supported links
 
 - Canonical IMDb `/title/<id>` links use `imdb:<id>`. Explicit TV context opens Sonarr; ambiguous results display both Radarr and Sonarr choices.
 - Canonical TMDB `/movie/<id>-<optional-slug>` links open Radarr using `tmdb:<id>`.
 - Canonical TMDB `/tv/<id>-<optional-slug>` links open Sonarr using `tmdb:<id>`. An optional locale prefix such as `/pt-BR/` is supported.
 - Canonical TVDB `/series/<id-or-slug>` links open Sonarr. Numeric IDs use `tvdb:<id>`; slug-only links fall back to a normal title search.
+- Canonical TVDB `/movies/<id-or-slug>` links open Radarr with a title search, since Radarr does not look up TVDB movie IDs. The visible title is preferred, with a readable slug as fallback; numeric URLs need a visible title.
 - Legacy TVDB series URLs such as `/?tab=series&id=<id>` and `/?tab=series&seriesid=<id>` use the exact numeric TVDB ID.
 
 Episode, season, cast, person, and other descendant pages are intentionally ignored so their labels cannot be mistaken for title names.
