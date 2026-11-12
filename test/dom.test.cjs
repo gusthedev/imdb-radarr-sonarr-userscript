@@ -85,7 +85,8 @@ for (const [url, label] of [
     ['https://www.imdb.com/title/tt123/', 'Add to Sonarr'],
     ['https://www.themoviedb.org/movie/77-film', 'Add to Radarr'],
     ['https://www.themoviedb.org/pt-BR/tv/88-show', 'Add to Sonarr'],
-    ['https://thetvdb.com/series/a-show', 'Add to Sonarr']
+    ['https://thetvdb.com/series/a-show', 'Add to Sonarr'],
+    ['https://thetvdb.com/movies/a-film', 'Add to Radarr']
 ]) {
     test(`provider title uses only its isolated page control: ${url}`, async t => {
         const h = setup(t, '<h1>A Show</h1><script type="application/ld+json">{"@type":"TVSeries"}</script>'
@@ -102,7 +103,8 @@ for (const [url, label] of [
 for (const [url, titlePath, descendantPath] of [
     ['https://www.imdb.com/chart/top/', '/title/tt123/', '/title/tt123/episodes/'],
     ['https://www.themoviedb.org/movie', '/movie/77-film', '/movie/77-film/cast'],
-    ['https://thetvdb.com/series', '/series/a-show', '/series/a-show/episodes/123']
+    ['https://thetvdb.com/series', '/series/a-show', '/series/a-show/episodes/123'],
+    ['https://thetvdb.com/movies', '/movies/a-film', '/movies/a-film/people/123']
 ]) {
     test(`provider listing/title/descendant navigation stays page-only on ${new URL(url).hostname}`, async t => {
         const h = setup(t, '<h1>A Show</h1><a href="https://imdb.com/title/tt123/">Related title</a>', url);
@@ -117,7 +119,7 @@ for (const [url, titlePath, descendantPath] of [
         h.w.document.querySelector('script').type = 'application/ld+json';
         await h.settle();
         assert.equal(providerButton(h.w.document).textContent,
-            url.includes('themoviedb') ? 'Add to Radarr' : 'Add to Sonarr');
+            titlePath.includes('/movie') ? 'Add to Radarr' : 'Add to Sonarr');
         h.w.history.replaceState({}, '', descendantPath);
         await h.settle();
         assert.equal(providerButton(h.w.document), undefined);
@@ -219,6 +221,48 @@ test('Google hover siblings do not replace an existing control', async t => {
     await h.settle();
     assert.equal(h.w.document.querySelector('.mdblist-link-wrap'), original);
     assert.equal(h.w.document.querySelectorAll('.mdblist-link-wrap').length, 1);
+});
+
+test('Google TVDB movie result opens Radarr by title and ignores cast links', async t => {
+    const href = 'https://thetvdb.com/movies/gianmarco-soresi-god-forbid';
+    const title = 'Gianmarco Soresi: God Forbid';
+    const h = setup(t,
+        `<section><h3>AI Overview</h3><div><a href="${href}">TheTVDB.com</a></div></section>`
+        + `<article id="movie"><a href="${href}"><h3>${title}</h3></a></article>`
+        + `<article id="cast"><a href="${href}/people/69550182"><h3>Gianmarco Soresi - God Forbid</h3></a></article>`,
+        'https://www.google.com/search?q=tvdb+God+Forbid+gianmarco');
+    await h.settle();
+    const button = h.w.document.querySelector('#movie button');
+    assert.ok(button, 'The main TVDB movie result must get the control');
+    assert.equal(button.textContent, 'Radarr');
+    assert.equal(h.w.document.querySelectorAll('button').length, 1);
+    let opened;
+    h.w.open = (...args) => { opened = args; };
+    button.click();
+    assert.deepEqual(opened, [`https://radarr.example.com/add/new?term=${encodeURIComponent(title)}`, '_blank', 'noopener']);
+    h.w.document.querySelector('#movie a').insertAdjacentHTML('afterend', '<span class="google-hover-layer"></span>');
+    h.w.dispatchEvent(new h.w.Event('focus'));
+    await h.settle();
+    assert.equal(h.w.document.querySelector('#movie button'), button);
+    assert.equal(h.w.document.querySelectorAll('button').length, 1);
+});
+
+test('numeric TVDB movie IDs do not claim an exact Radarr library match', async t => {
+    const h = setup(t, '<h1>Gianmarco Soresi: God Forbid</h1>', 'https://thetvdb.com/movies/377642', {
+        readLibrary: async type => {
+            assert.equal(type, 'movie');
+            return { state: 'ready', rows: [{ tmdbId: 377642, titleSlug: 'unrelated-movie' }] };
+        }
+    });
+    await h.settle();
+    const button = providerButton(h.w.document);
+    assert.equal(button.textContent, 'Add to Radarr');
+    assert.match(button.title, /Library status needs an exact ID/);
+    let opened;
+    h.w.open = url => { opened = new URL(url); };
+    button.click();
+    assert.equal(opened.pathname, '/add/new');
+    assert.equal(opened.searchParams.get('term'), 'Gianmarco Soresi: God Forbid');
 });
 
 test('duplicate Google cards keep one stable owner outside flipped headers', async t => {

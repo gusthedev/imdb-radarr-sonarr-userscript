@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IMDb to Radarr/Sonarr (Shared Core)
 // @namespace    shared.imdb.radarr.sonarr
-// @version      5.6.12
+// @version      5.6.13
 // @description  Adds Radarr and Sonarr controls for canonical IMDb, TMDB, and TVDB titles using loader-provided endpoints.
 // @match        *://*/*
 // @exclude      *://mdblist.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    const CORE_VERSION = '5.6.12';
+    const CORE_VERSION = '5.6.13';
     const INSTANCE_KEY = Symbol.for('shared.imdb.radarr.sonarr.instance');
     if (globalThis[INSTANCE_KEY]) return;
 
@@ -196,8 +196,8 @@
             return firstLine;
         }
 
-        const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?series\/([^/?#]+)\/?$/i)?.[1] || '';
-        return decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+        const slug = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?(?:series|movies)\/([^/?#]+)\/?$/i)?.[1] || '';
+        return /^\d+$/.test(slug) ? '' : decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
     }
 
     function searchParamCaseInsensitive(url, name) {
@@ -236,6 +236,14 @@
             }
 
             if (/(^|\.)thetvdb\.com$/i.test(hostname)) {
+                const moviePath = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?movies\/([^/?#]+)\/?$/i);
+                if (moviePath) {
+                    // Radarr accepts IMDb/TMDB IDs, not TVDB movie IDs. Use the
+                    // title, retaining the TVDB identity only for deduplication.
+                    const title = titleFromTVDBLink(link, url, container)
+                        .replace(/\s*[-–—|]\s*thetvdb(?:\.com)?\s*$/i, '').trim();
+                    return title ? { source: 'tvdb', id: moviePath[1], type: 'movie', term: title } : null;
+                }
                 const seriesPath = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?series\/([^/?#]+)\/?$/i);
                 const legacyPath = /^(?:\/|\/index\.php)$/i.test(url.pathname)
                     && searchParamCaseInsensitive(url, 'tab').toLowerCase() === 'series';
@@ -543,7 +551,8 @@
     function updateLibraryButton(button) {
         const { reference, type, service, label } = button._library;
         const snapshot = librarySnapshots.get(type);
-        const exact = reference.source === 'imdb' || /^\d+$/.test(reference.id);
+        const exact = !(reference.source === 'tvdb' && type === 'movie')
+            && (reference.source === 'imdb' || /^\d+$/.test(reference.id));
         const matched = exact ? snapshot?.items?.get(`${reference.source}:${reference.id}`) : null;
         button._library.item = matched;
         const text = matched ? `✓ In ${service}` : label;
